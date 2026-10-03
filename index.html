@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Angie - Online Photobooth</title>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'booth-bg': '#3c342f',
+                        'booth-cream': '#f5efdf',
+                        'booth-accent': '#e17d6b',
+                        'booth-dark': '#2a2420',
+                    },
+                    fontFamily: {
+                        sans: ['"DM Sans"', 'sans-serif'],
+                        serif: ['"Playfair Display"', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- MediaPipe Selfie Segmentation -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            background-color: #3c342f;
+            color: #f5efdf;
+            margin: 0;
+            overflow-x: hidden;
+            font-family: 'DM Sans', sans-serif;
+        }
+        
+        /* Ticket button styling */
+        .ticket-btn {
+            background-color: #f5efdf;
+            background-image: 
+                radial-gradient(circle at 0 50%, #3c342f 8px, transparent 9px),
+                radial-gradient(circle at 100% 50%, #3c342f 8px, transparent 9px);
+            background-position: left center, right center;
+            background-repeat: no-repeat;
+            background-size: 51% 100%, 51% 100%;
+            border: 2px dashed #b5a995;
+            color: #3c342f;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: transform 0.1s;
+        }
+        .ticket-btn:active { transform: scale(0.95); }
+
+        /* Patterns for Frames */
+        .pattern-teddy { background-color: #f5efdf; background-image: radial-gradient(#d4a373 15%, transparent 16%); background-size: 40px 40px; }
+        .pattern-hearts { background-color: #fcf6bd; background-image: radial-gradient(#e17d6b 20%, transparent 21%); background-size: 30px 30px; }
+        .pattern-cherry { background-color: #a2d2ff; }
+        .pattern-gingham { background-color: #a3b18a; background-image: repeating-linear-gradient(transparent, transparent 15px, rgba(255,255,255,0.3) 15px, rgba(255,255,255,0.3) 30px), repeating-linear-gradient(90deg, transparent, transparent 15px, rgba(255,255,255,0.3) 15px, rgba(255,255,255,0.3) 30px); }
+
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root" class="min-h-screen w-full flex flex-col"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const LAYOUTS = [
+            { id: '4cut', name: '4 cut', desc: 'the classic strip', slots: 4, cols: 1 },
+            { id: '2x2', name: '2 x 2', desc: 'four, on a card', slots: 4, cols: 2 },
+            { id: '2cut', name: '2 cut', desc: 'two big photos', slots: 2, cols: 1 },
+            { id: 'polaroid', name: 'Polaroid', desc: 'one shot', slots: 1, cols: 1 }
+        ];
+
+        const FRAMES = [
+            { id: 'simple', name: 'Simple', class: 'bg-white' },
+            { id: 'teddy', name: 'Teddy', class: 'pattern-teddy' },
+            { id: 'hearts', name: 'Hearts', class: 'pattern-hearts' },
+            { id: 'gingham', name: 'Gingham', class: 'pattern-gingham' }
+        ];
+
+        // Simulasi Server (Bisa dicoba beda Tab di Browser yg sama)
+        const channel = new BroadcastChannel('angie_booth');
+
+        const App = () => {
+            // Flow: home -> set-people -> lobby -> camera -> setup-size -> setup-frame -> booth -> result
+            const [view, setView] = useState('home'); 
+            
+            const [roomCode, setRoomCode] = useState('');
+            const [joinInput, setJoinInput] = useState('');
+            const [maxPeople, setMaxPeople] = useState(2);
+            const [currentPeople, setCurrentPeople] = useState(1);
+            const [isHost, setIsHost] = useState(false);
+            
+            const [selectedLayout, setSelectedLayout] = useState('4cut');
+            const [selectedFrame, setSelectedFrame] = useState('simple');
+            
+            // Camera & AI Refs
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const [isCameraReady, setIsCameraReady] = useState(false);
+            const [countdown, setCountdown] = useState(null);
+            const [photos, setPhotos] = useState([]);
+
+            useEffect(() => {
+                // Mendengarkan pesan dari tab/player lain
+                channel.onmessage = (event) => {
+                    const data = event.data;
+                    if (data.type === 'JOIN_ROOM' && data.code === roomCode && isHost) {
+                        setCurrentPeople(prev => Math.min(prev + 1, maxPeople));
+                    }
+                    if (data.type === 'START_GAME' && data.code === roomCode && !isHost) {
+                        setView('camera');
+                    }
+                };
+            }, [roomCode, isHost, maxPeople]);
+
+            const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
+
+            // FLOW 1: CREATE OR JOIN
+            const handleCreateClick = () => {
+                setIsHost(true);
+                setRoomCode(generateCode());
+                setView('set-people'); // Lanjut ke pilih orang
+            };
+
+            const handleJoinClick = () => {
+                if(joinInput.trim().length === 4) {
+                    setIsHost(false);
+                    setRoomCode(joinInput.toUpperCase());
+                    channel.postMessage({ type: 'JOIN_ROOM', code: joinInput.toUpperCase() });
+                    setView('lobby');
+                } else {
+                    alert("Masukkan 4 digit kode yang valid.");
+                }
+            };
+
+            // FLOW 2: PILIH JUMLAH ORANG
+            const handleSetPeople = (num) => {
+                setMaxPeople(num);
+                setView('lobby');
+            };
+
+            // FLOW 3: LOBBY & START
+            const handleStartRoom = () => {
+                channel.postMessage({ type: 'START_GAME', code: roomCode });
+                setView('camera');
+            };
+
+            // FLOW 4: MINTA AKSES KAMERA
+            const startCamera = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        
+                        // Inisialisasi AI Hapus Background (MediaPipe)
+                        const selfieSegmentation = new SelfieSegmentation({
+                            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+                        });
+                        selfieSegmentation.setOptions({ modelSelection: 1 });
+                        
+                        selfieSegmentation.onResults((results) => {
+                            if(!canvasRef.current) return;
+                            const ctx = canvasRef.current.getContext('2d');
+                            const w = canvasRef.current.width;
+                            const h = canvasRef.current.height;
+                            
+                            ctx.save();
+                            ctx.clearRect(0, 0, w, h);
+                            
+                            // Mirror image agar seperti cermin
+                            ctx.translate(w, 0);
+                            ctx.scale(-1, 1);
+                            
+                            // 1. Gambar mask (siluet orangnya)
+                            ctx.globalCompositeOperation = 'source-over';
+                            ctx.drawImage(results.segmentationMask, 0, 0, w, h);
+                            
+                            // 2. Terapkan foto asli tapi HANYA di bagian siluet
+                            ctx.globalCompositeOperation = 'source-in';
+                            ctx.drawImage(results.image, 0, 0, w, h);
+                            
+                            ctx.restore();
+                        });
+
+                        const sendFrame = async () => {
+                            if (!videoRef.current || videoRef.current.paused) return;
+                            await selfieSegmentation.send({image: videoRef.current});
+                            requestAnimationFrame(sendFrame);
+                        };
+
+                        videoRef.current.onloadeddata = () => {
+                            videoRef.current.play();
+                            setIsCameraReady(true);
+                            sendFrame();
+                            
+                            // Setelah kamera nyala, lanjut pilih layout
+                            setTimeout(() => setView('setup-size'), 1500);
+                        };
+                    }
+                } catch (err) {
+                    alert("Akses kamera ditolak. Harap izinkan kamera di pengaturan browser.");
+                }
+            };
+
+            // Fungsi Ambil Foto (Hanya Orang tanpa BG)
+            const takePhotoSequence = async () => {
+                const layout = LAYOUTS.find(l => l.id === selectedLayout);
+                let currentShots = [];
+                
+                for(let i = 0; i < layout.slots; i++) {
+                    for(let c = 3; c > 0; c--) {
+                        setCountdown(c);
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                    setCountdown('CHEESE!');
+                    
+                    // Ambil foto dari Canvas yang backgroundnya sudah transparan
+                    const imgData = canvasRef.current.toDataURL('image/png');
+                    currentShots.push(imgData);
+                    setPhotos([...currentShots]);
+                    
+                    await new Promise(r => setTimeout(r, 1000));
+                    setCountdown(null);
+                }
+                
+                setView('result');
+            };
+
+            // ================== RENDER VIEWS ==================
+
+            if (view === 'home') {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
+                        <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Angie</h1>
+                        
+                        <button onClick={handleCreateClick} className="ticket-btn w-64 py-4 text-center rounded">
+                            Create Room
+                        </button>
+                        
+                        <div className="flex items-center space-x-2 text-booth-cream opacity-50 w-64">
+                            <hr className="flex-1 border-current" />
+                            <span>OR</span>
+                            <hr className="flex-1 border-current" />
+                        </div>
+
+                        <div className="w-64 flex flex-col space-y-3">
+                            <input 
+                                type="text" 
+                                placeholder="ENTER CODE" 
+                                className="w-full bg-booth-dark border border-booth-cream/30 rounded py-3 px-4 text-center uppercase tracking-widest outline-none focus:border-booth-accent text-white"
+                                maxLength={4}
+                                value={joinInput}
+                                onChange={(e) => setJoinInput(e.target.value)}
+                            />
+                            <button onClick={handleJoinClick} className="bg-booth-cream text-booth-dark font-bold rounded w-full py-3">
+                                Join Room
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === 'set-people') {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
+                        <h2 className="font-serif text-3xl mb-4">How many people?</h2>
+                        <div className="grid grid-cols-2 gap-4 w-64">
+                            {[1, 2, 3, 4].map(num => (
+                                <button 
+                                    key={num} 
+                                    onClick={() => handleSetPeople(num)}
+                                    className="border-2 border-booth-cream/30 hover:border-booth-accent bg-booth-dark text-xl py-6 rounded-xl transition"
+                                >
+                                    {num}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === 'lobby') {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+                        <h2 className="font-serif text-3xl mb-2">Room Code</h2>
+                        <div className="text-6xl font-bold tracking-widest text-booth-accent bg-booth-dark border-2 border-booth-cream/20 px-8 py-4 rounded-xl shadow-lg">
+                            {roomCode}
+                        </div>
+                        
+                        <div className="mt-12 bg-booth-dark p-6 rounded-xl w-64 border border-booth-cream/10">
+                            <h3 className="text-lg opacity-80 mb-2">Participants</h3>
+                            <div className="text-3xl font-serif text-booth-cream">
+                                {isHost ? `${currentPeople} / ${maxPeople}` : 'Joined!'}
+                            </div>
+                            <p className="text-sm opacity-50 mt-2">
+                                {isHost ? "Buka tab baru untuk coba Join" : "Menunggu Host memulai..."}
+                            </p>
+                        </div>
+                        
+                        {isHost && (
+                            <button onClick={handleStartRoom} className="ticket-btn w-64 py-4 mt-8 text-lg">
+                                Lanjut
+                            </button>
+                        )}
+                    </div>
+                );
+            }
+
+            if (view === 'camera') {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+                        <div className="w-20 h-20 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-6"></div>
+                        <h2 className="font-serif text-2xl">Meminta Akses Kamera...</h2>
+                        <p className="opacity-70 mt-4">Pastikan Anda mengizinkan akses kamera pada browser Anda.</p>
+                        
+                        <button onClick={startCamera} className="bg-booth-accent text-white font-bold rounded-lg px-8 py-3 mt-8">
+                            Izinkan Kamera
+                        </button>
+                    </div>
+                );
+            }
+
+            if (view === 'setup-size') {
+                return (
+                    <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
+                        <div className="flex items-center justify-center mb-8 relative">
+                            <h2 className="font-serif text-3xl">Pick a size</h2>
+                        </div>
+                        <p className="text-center opacity-70 mb-6">Tap one. Either of you can choose.</p>
+                        
+                        <div className="grid grid-cols-2 gap-4 flex-1">
+                            {LAYOUTS.map(l => (
+                                <div key={l.id} 
+                                     onClick={() => setSelectedLayout(l.id)}
+                                     className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} shadow-md`}>
+                                    <h3 className="font-bold text-xl">{l.name}</h3>
+                                    <p className="text-sm opacity-70 text-center">{l.desc}</p>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-8 flex justify-center pb-8">
+                            <button onClick={() => setView('setup-frame')} className="ticket-btn w-48 py-3">Next</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === 'setup-frame') {
+                return (
+                    <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
+                        <div className="flex items-center justify-center mb-6 relative">
+                            <button onClick={() => setView('setup-size')} className="absolute left-0 opacity-70">← Back</button>
+                            <h2 className="font-serif text-3xl">Pick a frame</h2>
+                        </div>
+                        <p className="text-center opacity-70 mb-6">Your photos go in the white boxes.</p>
+                        
+                        <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto hide-scrollbar">
+                            {FRAMES.map(f => (
+                                <div key={f.id} 
+                                     onClick={() => setSelectedFrame(f.id)}
+                                     className={`border-4 rounded-xl h-48 cursor-pointer transition flex flex-col items-center justify-end p-2 shadow-lg ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}`}>
+                                    <span className="bg-black/60 text-white px-3 py-1 rounded text-sm mb-2">{f.name}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-8 flex justify-center pb-8">
+                            <button onClick={() => setView('booth')} className="ticket-btn w-48 py-3">Take Photo!</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === 'booth') {
+                return (
+                    <div className="flex-1 flex flex-col items-center justify-center bg-black relative">
+                        {/* Video untuk menangkap kamera (Disembunyikan) */}
+                        <video ref={videoRef} className="hidden" playsInline muted></video>
+                        
+                        {/* Canvas yang menampilkan HANYA ORANG (Background terhapus) */}
+                        <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
+                        
+                        {/* Hitung Mundur */}
+                        {countdown && (
+                            <div className="absolute inset-0 flex items-center justify-center text-8xl font-bold text-white drop-shadow-2xl z-20" style={{ textShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+                                {countdown}
+                            </div>
+                        )}
+                        
+                        {/* Tombol Jepret */}
+                        {isCameraReady && !countdown && photos.length === 0 && (
+                            <div className="absolute bottom-12 z-20">
+                                <button onClick={takePhotoSequence} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+
+            if (view === 'result') {
+                const layoutObj = LAYOUTS.find(l => l.id === selectedLayout);
+                const frameClass = FRAMES.find(f => f.id === selectedFrame).class;
+                
+                return (
+                    <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
+                        <h2 className="font-serif text-3xl mb-6 mt-4">Your Photos</h2>
+                        
+                        {/* Photostrip Final */}
+                        <div className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
+                             style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }} id="final-result">
+                            
+                            <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
+                                {photos.map((p, i) => (
+                                    <div key={i} className="aspect-[4/3] bg-booth-dark overflow-hidden relative shadow-inner">
+                                        {/* Background transparan, foto (orangnya saja) akan muncul di sini */}
+                                        <img src={p} className="w-full h-full object-cover" />
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <div className="text-center font-serif text-sm mt-3 font-bold text-black/60 tracking-widest">
+                                ANGIE BOOTH
+                            </div>
+                        </div>
+                        
+                        <button onClick={() => window.location.reload()} className="mt-10 text-booth-cream border-2 border-booth-cream px-8 py-3 rounded font-bold uppercase tracking-wider">
+                            Home
+                        </button>
+                    </div>
+                );
+            }
+
+            return null;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
