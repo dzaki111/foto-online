@@ -154,21 +154,19 @@
                 setView('camera');
             };
 
-            // PERBAIKAN 1: Fungsi ini hanya untuk minta izin, lalu lanjut ke Pilih Ukuran (Setup Size)
-            const requestPermissionOnly = async () => {
+            // Mengaktifkan kamera dan langsung lanjut ke setup ukuran (Setup Size)
+            const handleActivateCamera = async () => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    // Izin berhasil didapat. Matikan stream sementara agar lampu kamera mati.
+                    // Hentikan stream sementara agar tidak bentrok dengan halaman booth nanti
                     stream.getTracks().forEach(track => track.stop());
-                    
-                    // Lanjut ke langkah berikutnya
                     setView('setup-size');
                 } catch (err) {
-                    alert("Gagal. Pastikan browser Anda mengizinkan akses kamera.");
+                    alert("Gagal mengaktifkan kamera. Pastikan browser mengizinkan akses kamera.");
                 }
             };
 
-            // PERBAIKAN 2: Fungsi ini untuk menyalakan Kamera + AI Hapus Background (Dijalankan saat masuk Booth)
+            // Menyalakan Kamera + AI Hapus Background saat masuk Booth
             const startCameraAndAI = async () => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
@@ -217,7 +215,6 @@
                 }
             };
 
-            // Menjalankan startCameraAndAI otomatis HANYA SAAT view berubah jadi 'booth'
             useEffect(() => {
                 if (view === 'booth') {
                     startCameraAndAI();
@@ -243,7 +240,6 @@
                     setCountdown(null);
                 }
                 
-                // Matikan kamera setelah selesai
                 if (videoRef.current && videoRef.current.srcObject) {
                     videoRef.current.srcObject.getTracks().forEach(track => track.stop());
                 }
@@ -335,11 +331,11 @@
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
                         <div className="w-20 h-20 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-6"></div>
-                        <h2 className="font-serif text-2xl">Meminta Akses Kamera</h2>
-                        <p className="opacity-70 mt-4 max-w-xs mx-auto">Kami butuh izin kamera Anda untuk mulai mengambil foto.</p>
+                        <h2 className="font-serif text-2xl">Siap Menggunakan Kamera</h2>
+                        <p className="opacity-70 mt-4 max-w-xs mx-auto">Klik tombol di bawah untuk mengaktifkan kamera Anda.</p>
                         
-                        <button onClick={requestPermissionOnly} className="bg-booth-accent text-white font-bold rounded-lg px-8 py-4 mt-8 shadow-lg active:scale-95 transition">
-                            Izinkan Kamera
+                        <button onClick={handleActivateCamera} className="bg-booth-accent text-white font-bold rounded-lg px-8 py-4 mt-8 shadow-lg active:scale-95 transition">
+                            Aktifkan Kamera
                         </button>
                     </div>
                 );
@@ -356,8 +352,8 @@
                         <div className="grid grid-cols-2 gap-4 flex-1">
                             {LAYOUTS.map(l => (
                                 <div key={l.id} 
-                                     onClick={() => setSelectedLayout(l.id)}
-                                     className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} shadow-md`}>
+                                   onClick={() => setSelectedLayout(l.id)}
+                                   className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} shadow-md`}>
                                     <h3 className="font-bold text-xl">{l.name}</h3>
                                     <p className="text-sm opacity-70 text-center">{l.desc}</p>
                                 </div>
@@ -382,8 +378,8 @@
                         <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto hide-scrollbar">
                             {FRAMES.map(f => (
                                 <div key={f.id} 
-                                     onClick={() => setSelectedFrame(f.id)}
-                                     className={`border-4 rounded-xl h-48 cursor-pointer transition flex flex-col items-center justify-end p-2 shadow-lg ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}`}>
+                                   onClick={() => setSelectedFrame(f.id)}
+                                   className={`border-4 rounded-xl h-48 cursor-pointer transition flex flex-col items-center justify-end p-2 shadow-lg ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}`}>
                                     <span className="bg-black/60 text-white px-3 py-1 rounded text-sm mb-2">{f.name}</span>
                                 </div>
                             ))}
@@ -398,13 +394,10 @@
             if (view === 'booth') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center bg-black relative">
-                        {/* Video asli */}
                         <video ref={videoRef} className="hidden" playsInline muted></video>
                         
-                        {/* Hasil Canvas tanpa Background */}
                         <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
                         
-                        {/* Loading AI Indicator (Sebelum kamera siap) */}
                         {!isCameraReady && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80">
                                 <div className="w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-4"></div>
