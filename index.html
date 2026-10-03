@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Angie - Online Photobooth</title>
+    <title>Zaki - Online Photobooth</title>
     
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
@@ -34,9 +34,10 @@
         }
     </script>
     
-    <!-- MediaPipe Selfie Segmentation -->
+    <!-- MediaPipe Selfie Segmentation & html2canvas for downloading -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
     <style>
         body {
@@ -93,7 +94,7 @@
             { id: 'gingham', name: 'Gingham', class: 'pattern-gingham' }
         ];
 
-        const channel = new BroadcastChannel('angie_booth');
+        const channel = new BroadcastChannel('zaki_booth');
 
         const App = () => {
             const [view, setView] = useState('home'); 
@@ -109,6 +110,7 @@
             
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
+            const resultRef = useRef(null);
             const [isCameraReady, setIsCameraReady] = useState(false);
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
@@ -154,11 +156,9 @@
                 setView('camera');
             };
 
-            // Mengaktifkan kamera dan langsung lanjut ke setup ukuran (Setup Size)
             const handleActivateCamera = async () => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    // Hentikan stream sementara agar tidak bentrok dengan halaman booth nanti
                     stream.getTracks().forEach(track => track.stop());
                     setView('setup-size');
                 } catch (err) {
@@ -166,7 +166,6 @@
                 }
             };
 
-            // Menyalakan Kamera + AI Hapus Background saat masuk Booth
             const startCameraAndAI = async () => {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
@@ -247,12 +246,23 @@
                 setView('result');
             };
 
+            const downloadImage = () => {
+                if (resultRef.current) {
+                    html2canvas(resultRef.current, { scale: 2, useCORS: true }).then(canvas => {
+                        const link = document.createElement('a');
+                        link.download = 'zaki-photobooth.png';
+                        link.href = canvas.toDataURL('image/png');
+                        link.click();
+                    });
+                }
+            };
+
             // ================== RENDER VIEWS ==================
 
             if (view === 'home') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
-                        <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Angie</h1>
+                        <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Zaki</h1>
                         
                         <button onClick={handleCreateClick} className="ticket-btn w-64 py-4 text-center rounded">
                             Create Room
@@ -428,8 +438,9 @@
                     <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
                         <h2 className="font-serif text-3xl mb-6 mt-4">Your Photos</h2>
                         
-                        <div className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
-                             style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }} id="final-result">
+                        {/* Area yang akan diunduh */}
+                        <div ref={resultRef} className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
+                             style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }}>
                             
                             <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
                                 {photos.map((p, i) => (
@@ -440,13 +451,18 @@
                             </div>
                             
                             <div className="text-center font-serif text-sm mt-3 font-bold text-black/60 tracking-widest">
-                                ANGIE BOOTH
+                                ZAKI BOOTH
                             </div>
                         </div>
                         
-                        <button onClick={() => window.location.reload()} className="mt-10 text-booth-cream border-2 border-booth-cream px-8 py-3 rounded font-bold uppercase tracking-wider active:bg-booth-cream active:text-booth-dark transition">
-                            Home
-                        </button>
+                        <div className="flex flex-col gap-3 mt-8 w-64">
+                            <button onClick={downloadImage} className="ticket-btn w-full py-3 shadow-lg">
+                                Unduh Foto
+                            </button>
+                            <button onClick={() => window.location.reload()} className="text-booth-cream border-2 border-booth-cream py-3 rounded font-bold uppercase tracking-wider active:bg-booth-cream active:text-booth-dark transition">
+                                Home
+                            </button>
+                        </div>
                     </div>
                 );
             }
