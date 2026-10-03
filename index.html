@@ -34,7 +34,11 @@
         }
     </script>
     
-    <!-- MediaPipe Selfie Segmentation & html2canvas for downloading -->
+    <!-- Firebase SDK (Compat v9) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <!-- MediaPipe Selfie Segmentation & html2canvas -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -80,6 +84,22 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
+        // Inisialisasi Firebase menggunakan konfigurasi proyek Anda
+        const firebaseConfig = {
+            apiKey: "AIzaSyAnsmara43x_y80t--OXGKnDAjyavgGf0o",
+            authDomain: "zakibooth-6f843.firebaseapp.com",
+            databaseURL: "https://zakibooth-6f843-default-rtdb.firebaseio.com",
+            projectId: "zakibooth-6f843",
+            storageBucket: "zakibooth-6f843.appspot.com",
+            messagingSenderId: "278467916314",
+            appId: "1:278467916314:web:6bb82d1c19c9122a897a3"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.database();
+
         const LAYOUTS = [
             { id: '4cut', name: '4 cut', desc: 'the classic strip', slots: 4, cols: 1 },
             { id: '2x2', name: '2 x 2', desc: 'four, on a card', slots: 4, cols: 2 },
@@ -93,8 +113,6 @@
             { id: 'hearts', name: 'Hearts', class: 'pattern-hearts' },
             { id: 'gingham', name: 'Gingham', class: 'pattern-gingham' }
         ];
-
-        const channel = new BroadcastChannel('zaki_booth');
 
         const App = () => {
             const [view, setView] = useState('home'); 
@@ -115,32 +133,62 @@
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
 
+            // Realtime Sync dengan Firebase Database
             useEffect(() => {
-                channel.onmessage = (event) => {
-                    const data = event.data;
-                    if (data.type === 'JOIN_ROOM' && data.code === roomCode && isHost) {
-                        setCurrentPeople(prev => Math.min(prev + 1, maxPeople));
-                    }
-                    if (data.type === 'START_GAME' && data.code === roomCode && !isHost) {
-                        setView('camera');
+                if (!roomCode) return;
+                const roomRef = db.ref('rooms/' + roomCode);
+
+                const handleValue = (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        if (data.participants) {
+                            setCurrentPeople(data.participants);
+                        }
+                        if (data.status === 'started' && !isHost) {
+                            setView('camera');
+                        }
                     }
                 };
-            }, [roomCode, isHost, maxPeople]);
+
+                roomRef.on('value', handleValue);
+                return () => roomRef.off('value', handleValue);
+            }, [roomCode, isHost]);
 
             const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
 
             const handleCreateClick = () => {
+                const code = generateCode();
                 setIsHost(true);
-                setRoomCode(generateCode());
+                setRoomCode(code);
+                
+                // Buat room di Firebase
+                db.ref('rooms/' + code).set({
+                    status: 'waiting',
+                    participants: 1,
+                    maxPeople: 2
+                });
+
                 setView('set-people');
             };
 
             const handleJoinClick = () => {
-                if(joinInput.trim().length === 4) {
-                    setIsHost(false);
-                    setRoomCode(joinInput.toUpperCase());
-                    channel.postMessage({ type: 'JOIN_ROOM', code: joinInput.toUpperCase() });
-                    setView('lobby');
+                const code = joinInput.trim().toUpperCase();
+                if(code.length === 4) {
+                    const roomRef = db.ref('rooms/' + code);
+                    roomRef.once('value', (snapshot) => {
+                        if (snapshot.exists()) {
+                            setIsHost(false);
+                            setRoomCode(code);
+                            
+                            // Tambah jumlah partisipan di Firebase
+                            const current = snapshot.val().participants || 1;
+                            roomRef.update({ participants: current + 1 });
+
+                            setView('lobby');
+                        } else {
+                            alert("Room tidak ditemukan! Periksa kembali kode ruangan.");
+                        }
+                    });
                 } else {
                     alert("Masukkan 4 digit kode yang valid.");
                 }
@@ -148,11 +196,12 @@
 
             const handleSetPeople = (num) => {
                 setMaxPeople(num);
+                db.ref('rooms/' + roomCode).update({ maxPeople: num });
                 setView('lobby');
             };
 
             const handleStartRoom = () => {
-                channel.postMessage({ type: 'START_GAME', code: roomCode });
+                db.ref('rooms/' + roomCode).update({ status: 'started' });
                 setView('camera');
             };
 
@@ -324,7 +373,7 @@
                                 {isHost ? `${currentPeople} / ${maxPeople}` : 'Joined!'}
                             </div>
                             <p className="text-sm opacity-50 mt-2">
-                                {isHost ? "Buka tab baru untuk coba Join" : "Menunggu Host memulai..."}
+                                {isHost ? "Bagikan kode ini ke temanmu" : "Menunggu Host memulai..."}
                             </p>
                         </div>
                         
@@ -438,7 +487,6 @@
                     <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
                         <h2 className="font-serif text-3xl mb-6 mt-4">Your Photos</h2>
                         
-                        {/* Area yang akan diunduh */}
                         <div ref={resultRef} className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
                              style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }}>
                             
