@@ -116,9 +116,31 @@
             { id: 'gingham', name: 'Gingham', class: 'pattern-gingham' }
         ];
 
+        // --- SISTEM PELINDUNG ERROR ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, errorMsg: '' };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, errorMsg: error.toString() };
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-booth-bg min-h-screen">
+                            <h2 className="text-3xl text-booth-accent font-bold mb-4">Oops! Terjadi Kesalahan</h2>
+                            <p className="opacity-80 mb-6">{this.state.errorMsg}</p>
+                            <button onClick={() => window.location.reload()} className="ticket-btn px-8 py-3">Refresh Halaman</button>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         const App = () => {
             const [view, setView] = useState('home'); 
-            
             const [roomCode, setRoomCode] = useState('');
             const [joinInput, setJoinInput] = useState('');
             const [maxPeople, setMaxPeople] = useState(2);
@@ -131,7 +153,6 @@
             const videoRef = useRef(null);
             const canvasRef = useRef(null); 
             const resultRef = useRef(null);
-            
             const remoteVids = useRef([]);
             const offscreenCanvasRef = useRef(null);
 
@@ -139,7 +160,6 @@
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
             
-            // Sync Foto Antara Host & Guest
             const [triggerCaptureState, setTriggerCaptureState] = useState(null);
             const lastProcessedTrigger = useRef(null);
 
@@ -150,7 +170,6 @@
                 offscreenCanvasRef.current = offscreen;
             }, []);
 
-            // Realtime Sync dengan Firebase Database
             useEffect(() => {
                 if (!roomCode) return;
                 const roomRef = db.ref('rooms/' + roomCode);
@@ -159,13 +178,10 @@
                     const data = snapshot.val();
                     if (data) {
                         if (data.participants) setCurrentPeople(data.participants);
-                        
-                        // Sync Pilihan Host ke Semua Orang
                         if (data.layout) setSelectedLayout(data.layout);
                         if (data.frame) setSelectedFrame(data.frame);
                         if (data.triggerCapture) setTriggerCaptureState(data.triggerCapture);
 
-                        // Guest Otomatis Mengikuti Layar Host
                         if (!isHost) {
                             setView(prevView => {
                                 if (data.status === 'camera' && prevView === 'lobby') return 'camera';
@@ -181,7 +197,6 @@
                 return () => roomRef.off('value', handleValue);
             }, [roomCode, isHost]);
 
-            // Eksekusi Foto pada Guest Saat Host Menekan Tombol
             useEffect(() => {
                 if (triggerCaptureState && triggerCaptureState !== lastProcessedTrigger.current) {
                     lastProcessedTrigger.current = triggerCaptureState;
@@ -202,7 +217,7 @@
                     maxPeople: 2,
                     layout: '4cut',
                     frame: 'simple'
-                });
+                }).catch(err => console.error("Firebase Error:", err));
 
                 setView('set-people');
             };
@@ -218,12 +233,11 @@
                             
                             const current = snapshot.val().participants || 1;
                             roomRef.update({ participants: current + 1 });
-
                             setView('lobby');
                         } else {
                             alert("Room tidak ditemukan! Periksa kembali kode ruangan.");
                         }
-                    });
+                    }).catch(err => alert("Gagal koneksi ke database."));
                 } else {
                     alert("Masukkan 4 digit kode yang valid.");
                 }
@@ -249,7 +263,6 @@
                         db.ref('rooms/' + roomCode).update({ status: 'setup-size' });
                         setView('setup-size');
                     } else {
-                        // Jika guest menyalakan kamera lebih lambat, cocokan dengan layar host saat ini
                         db.ref('rooms/' + roomCode).once('value', snap => {
                             const currentStatus = snap.val()?.status;
                             if (currentStatus === 'setup-frame' || currentStatus === 'booth') {
@@ -266,6 +279,10 @@
 
             const startCameraAndAI = async () => {
                 try {
+                    if (typeof SelfieSegmentation === 'undefined') {
+                        throw new Error("Sistem AI belum selesai dimuat. Coba refresh halaman.");
+                    }
+
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
                     if (videoRef.current) {
                         videoRef.current.srcObject = stream;
@@ -292,17 +309,23 @@
                             offCtx.restore();
 
                             const mainCtx = canvasRef.current.getContext('2d');
+                            // Hapus kanvas utama agar benar-benar transparan & background style bisa terlihat
                             mainCtx.clearRect(0, 0, w, h);
                             
+                            // Tampilkan video teman jika ada
                             remoteVids.current.forEach(rv => {
                                 if(rv.readyState >= 2) mainCtx.drawImage(rv, 0, 0, w, h);
                             });
+                            
+                            // Tampilkan wajah kita (sudah tanpa background)
                             mainCtx.drawImage(offscreenCanvasRef.current, 0, 0, w, h);
                         });
 
                         const sendFrame = async () => {
                             if (!videoRef.current || videoRef.current.paused) return;
-                            await selfieSegmentation.send({image: videoRef.current});
+                            try {
+                                await selfieSegmentation.send({image: videoRef.current});
+                            } catch (e) { /* Abaikan jika frame skip */ }
                             requestAnimationFrame(sendFrame);
                         };
 
@@ -311,16 +334,17 @@
                             setIsCameraReady(true);
                             sendFrame();
                             
+                            // PeerJS Connection
                             const localStream = offscreenCanvasRef.current.captureStream(30);
                             
                             if (isHost) {
                                 const peer = new Peer(`zakibooth-${roomCode}`);
+                                peer.on('error', (err) => console.log("PeerJS Error:", err));
                                 peer.on('call', (call) => {
                                     call.answer(localStream);
                                     call.on('stream', (remoteStream) => {
                                         const rv = document.createElement('video');
-                                        rv.autoplay = true;
-                                        rv.playsInline = true;
+                                        rv.autoplay = true; rv.playsInline = true; rv.muted = true;
                                         rv.srcObject = remoteStream;
                                         rv.onloadedmetadata = () => rv.play();
                                         remoteVids.current.push(rv);
@@ -328,22 +352,24 @@
                                 });
                             } else {
                                 const peer = new Peer();
+                                peer.on('error', (err) => console.log("PeerJS Error:", err));
                                 peer.on('open', () => {
                                     const call = peer.call(`zakibooth-${roomCode}`, localStream);
-                                    call.on('stream', (remoteStream) => {
-                                        const rv = document.createElement('video');
-                                        rv.autoplay = true;
-                                        rv.playsInline = true;
-                                        rv.srcObject = remoteStream;
-                                        rv.onloadedmetadata = () => rv.play();
-                                        remoteVids.current.push(rv);
-                                    });
+                                    if(call) {
+                                        call.on('stream', (remoteStream) => {
+                                            const rv = document.createElement('video');
+                                            rv.autoplay = true; rv.playsInline = true; rv.muted = true;
+                                            rv.srcObject = remoteStream;
+                                            rv.onloadedmetadata = () => rv.play();
+                                            remoteVids.current.push(rv);
+                                        });
+                                    }
                                 });
                             }
                         };
                     }
                 } catch (err) {
-                    alert("Terjadi kesalahan saat memuat kamera AI.");
+                    alert(err.message || "Terjadi kesalahan saat memuat kamera AI.");
                 }
             };
 
@@ -354,10 +380,7 @@
             }, [view]);
 
             const takePhotoSequence = async () => {
-                let activeLayout = selectedLayout;
-                setSelectedLayout(curr => { activeLayout = curr; return curr; });
-                
-                const layout = LAYOUTS.find(l => l.id === activeLayout);
+                const layout = LAYOUTS.find(l => l.id === selectedLayout) || LAYOUTS[0];
                 let currentShots = [];
                 
                 for(let i = 0; i < layout.slots; i++) {
@@ -384,7 +407,7 @@
 
             const downloadImage = () => {
                 if (resultRef.current) {
-                    html2canvas(resultRef.current, { scale: 2, useCORS: true }).then(canvas => {
+                    html2canvas(resultRef.current, { scale: 2, useCORS: true, backgroundColor: null }).then(canvas => {
                         const link = document.createElement('a');
                         link.download = 'zaki-photobooth.png';
                         link.href = canvas.toDataURL('image/png');
@@ -571,19 +594,19 @@
             }
 
             if (view === 'booth') {
-                // Mengambil class CSS dari frame yang dipilih Host untuk dijadikan background preview kamera
-                const frameClass = FRAMES.find(f => f.id === selectedFrame).class;
-
+                const frameClass = FRAMES.find(f => f.id === selectedFrame)?.class || 'bg-white';
+                
                 return (
+                    // Disinilah penyesuaian agar kanvas transparan & tembus pandang ke frame background style yang dipilih!
                     <div className={`flex-1 flex flex-col items-center justify-center relative ${frameClass}`}>
-                        <video ref={videoRef} className="hidden" playsInline muted></video>
+                        <video ref={videoRef} className="hidden" playsInline autoPlay muted></video>
                         
                         <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
                         
                         {!isCameraReady && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80 text-white">
                                 <div className="w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-4"></div>
-                                <p>Menyiapkan Studio...</p>
+                                <p>Menyiapkan Kamera dan Koneksi...</p>
                             </div>
                         )}
 
@@ -602,7 +625,7 @@
                                         takePhotoSequence();
                                     }} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
                                 ) : (
-                                    <div className="bg-black/60 text-white px-4 py-2 rounded-full text-sm">
+                                    <div className="bg-black/80 text-white px-6 py-3 rounded-full text-sm font-bold border border-white/20">
                                         Menunggu Host menjepret foto...
                                     </div>
                                 )}
@@ -613,8 +636,8 @@
             }
 
             if (view === 'result') {
-                const layoutObj = LAYOUTS.find(l => l.id === selectedLayout);
-                const frameClass = FRAMES.find(f => f.id === selectedFrame).class;
+                const layoutObj = LAYOUTS.find(l => l.id === selectedLayout) || LAYOUTS[0];
+                const frameClass = FRAMES.find(f => f.id === selectedFrame)?.class || 'bg-white';
                 
                 return (
                     <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
@@ -625,7 +648,8 @@
                             
                             <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
                                 {photos.map((p, i) => (
-                                    <div key={i} className="aspect-[4/3] bg-black/10 overflow-hidden relative shadow-inner rounded-sm">
+                                    // bg-transparent memastikan frame tembus pandang ke dalam cetakan hasil foto 
+                                    <div key={i} className="aspect-[4/3] bg-transparent overflow-hidden relative shadow-inner rounded-sm border border-black/10">
                                         <img src={p} className="w-full h-full object-cover" />
                                     </div>
                                 ))}
@@ -652,7 +676,7 @@
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 </body>
 </html>
