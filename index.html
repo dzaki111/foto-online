@@ -8,7 +8,7 @@
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
     
-    <!-- React & Babel TERBARU (Mengatasi Layar Blank) -->
+    <!-- React & Babel -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -116,6 +116,16 @@
             { id: 'gingham', name: 'Gingham', class: 'pattern-gingham' }
         ];
 
+        // Pilihan Warna Latar Belakang (Background / Gorden Warna)
+        const BG_COLORS = [
+            { id: 'bg-green-600', name: 'Hijau Gorden', hex: '#16a34a' },
+            { id: 'bg-red-600', name: 'Merah Mewah', hex: '#dc2626' },
+            { id: 'bg-blue-600', name: 'Biru Elegan', hex: '#2563eb' },
+            { id: 'bg-pink-500', name: 'Pink Manis', hex: '#ec4899' },
+            { id: 'bg-purple-600', name: 'Ungu Regal', hex: '#9333ea' },
+            { id: 'bg-neutral-900', name: 'Hitam Klasik', hex: '#171717' }
+        ];
+
         class ErrorBoundary extends React.Component {
             constructor(props) {
                 super(props);
@@ -148,6 +158,7 @@
             
             const [selectedLayout, setSelectedLayout] = useState('4cut');
             const [selectedFrame, setSelectedFrame] = useState('simple');
+            const [selectedBgColor, setSelectedBgColor] = useState('bg-green-600');
             
             const videoRef = useRef(null);
             const canvasRef = useRef(null); 
@@ -179,13 +190,14 @@
                         if (data.participants) setCurrentPeople(data.participants);
                         if (data.layout) setSelectedLayout(data.layout);
                         if (data.frame) setSelectedFrame(data.frame);
+                        if (data.bgColor) setSelectedBgColor(data.bgColor);
                         if (data.triggerCapture) setTriggerCaptureState(data.triggerCapture);
 
                         if (!isHost) {
                             setView(prevView => {
                                 if (data.status === 'camera' && prevView === 'lobby') return 'camera';
-                                if (data.status === 'setup-frame' && prevView === 'setup-size') return 'setup-frame';
-                                if (data.status === 'booth' && (prevView === 'setup-size' || prevView === 'setup-frame')) return 'booth';
+                                if (data.status === 'setup-bg' && prevView === 'setup-frame') return 'setup-bg';
+                                if (data.status === 'booth' && (prevView === 'setup-size' || prevView === 'setup-frame' || prevView === 'setup-bg')) return 'booth';
                                 return prevView;
                             });
                         }
@@ -215,7 +227,8 @@
                     participants: 1,
                     maxPeople: 2,
                     layout: '4cut',
-                    frame: 'simple'
+                    frame: 'simple',
+                    bgColor: 'bg-green-600'
                 }).catch(err => console.error("Firebase Error:", err));
 
                 setView('set-people');
@@ -265,7 +278,7 @@
                         db.ref('rooms/' + roomCode).once('value', snap => {
                             const data = snap.val();
                             const currentStatus = data ? data.status : null;
-                            if (currentStatus === 'setup-frame' || currentStatus === 'booth') {
+                            if (currentStatus === 'setup-frame' || currentStatus === 'setup-bg' || currentStatus === 'booth') {
                                 setView(currentStatus);
                             } else {
                                 setView('setup-size');
@@ -309,7 +322,6 @@
                             offCtx.restore();
 
                             const mainCtx = canvasRef.current.getContext('2d');
-                            // Hapus kanvas utama agar transparan 100%
                             mainCtx.clearRect(0, 0, w, h);
                             
                             remoteVids.current.forEach(rv => {
@@ -405,7 +417,7 @@
 
             const downloadImage = () => {
                 if (resultRef.current) {
-                    html2canvas(resultRef.current, { scale: 2, useCORS: true, backgroundColor: null }).then(canvas => {
+                    html2canvas(resultRef.current, { scale: 2, useCORS: true }).then(canvas => {
                         const link = document.createElement('a');
                         link.download = 'zaki-photobooth.png';
                         link.href = canvas.toDataURL('image/png');
@@ -572,9 +584,51 @@
                         <div className="mt-8 flex justify-center pb-8 min-h-[60px]">
                             {isHost && (
                                 <button onClick={() => {
+                                    db.ref('rooms/' + roomCode).update({ status: 'setup-bg' });
+                                    setView('setup-bg');
+                                }} className="ticket-btn w-48 py-3">Next</button>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // --- PILIHAN WARNA LATAR BELAKANG / GORDEN ---
+            if (view === 'setup-bg') {
+                return (
+                    <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
+                        <div className="flex items-center justify-center mb-6 relative">
+                            {isHost && <button onClick={() => {
+                                db.ref('rooms/' + roomCode).update({ status: 'setup-frame' });
+                                setView('setup-frame');
+                            }} className="absolute left-0 opacity-70">← Back</button>}
+                            <h2 className="font-serif text-3xl">Pick Background</h2>
+                        </div>
+                        <p className="text-center opacity-70 mb-6">
+                            {isHost ? "Host: Pilih warna latar belakang/gorden" : "Menunggu Host memilih background..."}
+                        </p>
+                        <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto hide-scrollbar">
+                            {BG_COLORS.map(bg => (
+                                <div key={bg.id} 
+                                   onClick={() => {
+                                       if(isHost) {
+                                           setSelectedBgColor(bg.id);
+                                           db.ref('rooms/' + roomCode).update({ bgColor: bg.id });
+                                       }
+                                   }}
+                                   className={`border-4 rounded-xl h-36 transition flex flex-col items-center justify-end p-3 shadow-lg ${bg.id}
+                                     ${selectedBgColor === bg.id ? 'border-booth-cream scale-105' : 'border-transparent'}
+                                     ${isHost ? 'cursor-pointer' : 'opacity-80'}`}>
+                                    <span className="bg-black/60 text-white px-3 py-1 rounded text-sm mb-1">{bg.name}</span>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-8 flex justify-center pb-8 min-h-[60px]">
+                            {isHost && (
+                                <button onClick={() => {
                                     db.ref('rooms/' + roomCode).update({ status: 'booth' });
                                     setView('booth');
-                                }} className="ticket-btn w-48 py-3">Take Photo!</button>
+                                }} className="ticket-btn w-48 py-3">Enter Booth</button>
                             )}
                         </div>
                     </div>
@@ -582,11 +636,9 @@
             }
 
             if (view === 'booth') {
-                const foundFrame = FRAMES.find(f => f.id === selectedFrame);
-                const frameClass = foundFrame ? foundFrame.class : 'bg-white';
-                
                 return (
-                    <div className={`flex-1 flex flex-col items-center justify-center relative ${frameClass}`}>
+                    // Latar belakang berubah sesuai warna gorden/background yang dipilih Host!
+                    <div className={`flex-1 flex flex-col items-center justify-center relative ${selectedBgColor}`}>
                         <video ref={videoRef} className="hidden" playsInline autoPlay muted></video>
                         
                         <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
@@ -639,7 +691,8 @@
                             
                             <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
                                 {photos.map((p, i) => (
-                                    <div key={i} className="aspect-[4/3] bg-transparent overflow-hidden relative shadow-inner rounded-sm border border-black/10">
+                                    // Kotak foto menggunakan warna background pilihan agar menyatu sempurna
+                                    <div key={i} className={`aspect-[4/3] ${selectedBgColor} overflow-hidden relative shadow-inner rounded-sm border border-black/10`}>
                                         <img src={p} className="w-full h-full object-cover" />
                                     </div>
                                 ))}
