@@ -94,11 +94,12 @@
             const [selectedLayout, setSelectedLayout] = useState('4cut');
             const [selectedFrame, setSelectedFrame] = useState('simple');
             
-            const rawVideoRef = useRef(null); // Video asli
-            const localCanvasRef = useRef(null); // Canvas tanpa BG (milik sendiri)
-            const remoteVideoRef = useRef(null); // Video teman tanpa BG
+            const rawVideoRef = useRef(null);
+            const localCanvasRef = useRef(null); 
+            const remoteVideoRef = useRef(null); 
             
             const [isCameraReady, setIsCameraReady] = useState(false);
+            const [isAiReady, setIsAiReady] = useState(false);
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
 
@@ -111,28 +112,21 @@
                 setIsHost(true);
                 setView('lobby');
 
-                // Inisiasi Server PeerJS untuk Host
                 const newPeer = new Peer(`angiebooth-${code}`);
                 
-                newPeer.on('open', (id) => {
-                    console.log('Host siap dengan ID:', id);
-                });
-
                 newPeer.on('connection', (conn) => {
                     setConnection(conn);
-                    
-                    conn.on('data', (data) => {
-                        handleIncomingData(data);
-                    });
-                    
-                    // Teman join, pindah ke layar kamera bareng-bareng
+                    conn.on('data', handleIncomingData);
                     setView('camera'); 
                 });
 
                 newPeer.on('call', (call) => {
-                    // Ketika teman mengirim videonya, kita angkat dan kirim video kita
-                    const myStream = localCanvasRef.current.captureStream(30);
-                    call.answer(myStream);
+                    if (localCanvasRef.current) {
+                        const myStream = localCanvasRef.current.captureStream(30);
+                        call.answer(myStream);
+                    } else {
+                        call.answer(); // Tolak lembut jika kamera belum siap
+                    }
                     
                     call.on('stream', (userVideoStream) => {
                         setRemoteStream(userVideoStream);
@@ -148,28 +142,19 @@
                 
                 setRoomCode(code);
                 setIsHost(false);
-                setView('camera'); // Langsung masuk layar kamera
+                setView('camera'); 
 
-                // Inisiasi Server PeerJS untuk Guest
                 const newPeer = new Peer();
                 
-                newPeer.on('open', (id) => {
-                    // Konek ke Host
+                newPeer.on('open', () => {
                     const conn = newPeer.connect(`angiebooth-${code}`);
-                    
-                    conn.on('open', () => {
-                        setConnection(conn);
-                    });
-
-                    conn.on('data', (data) => {
-                        handleIncomingData(data);
-                    });
+                    conn.on('open', () => setConnection(conn));
+                    conn.on('data', handleIncomingData);
                 });
 
                 setPeer(newPeer);
             };
 
-            // Menangani Data Sinkronisasi Jarak Jauh
             const handleIncomingData = (data) => {
                 if (data.type === 'SYNC_VIEW') setView(data.view);
                 if (data.type === 'SYNC_LAYOUT') setSelectedLayout(data.layout);
@@ -178,15 +163,17 @@
             };
 
             const syncData = (data) => {
-                if (connection && connection.open) {
-                    connection.send(data);
-                }
+                if (connection && connection.open) connection.send(data);
             };
 
             // ================= CAMERA & AI LOGIC =================
             const startCameraAndAI = async () => {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+                    // Gunakan resolusi standar agar ringan di HP
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
+                        audio: false 
+                    });
                     
                     if (rawVideoRef.current) {
                         rawVideoRef.current.srcObject = stream;
@@ -196,18 +183,25 @@
                         });
                         selfieSegmentation.setOptions({ modelSelection: 1 });
                         
+                        let localAiReady = false;
+
                         selfieSegmentation.onResults((results) => {
+                            if(!localAiReady) {
+                                localAiReady = true;
+                                setIsAiReady(true);
+                            }
+
                             if(!localCanvasRef.current) return;
                             const ctx = localCanvasRef.current.getContext('2d');
-                            const w = localCanvasRef.current.width;
-                            const h = localCanvasRef.current.height;
+                            const w = localCanvasRef.current.width || 640;
+                            const h = localCanvasRef.current.height || 480;
                             
                             ctx.save();
                             ctx.clearRect(0, 0, w, h);
                             ctx.translate(w, 0);
-                            ctx.scale(-1, 1); // Mirror
+                            ctx.scale(-1, 1); // Efek Cermin
                             
-                            // Masking Background jadi Transparan
+                            // Potong Background
                             ctx.globalCompositeOperation = 'source-over';
                             ctx.drawImage(results.segmentationMask, 0, 0, w, h);
                             ctx.globalCompositeOperation = 'source-in';
@@ -217,20 +211,40 @@
 
                         const sendFrame = async () => {
                             if (!rawVideoRef.current || rawVideoRef.current.paused) return;
-                            await selfieSegmentation.send({image: rawVideoRef.current});
+                            
+                            // FALLBACK: Tampilkan kamera asli sebelum AI selesai di-download (anti layar gelap)
+                            if (!localAiReady && localCanvasRef.current) {
+                                const ctx = localCanvasRef.current.getContext('2d');
+                                const w = localCanvasRef.current.width || 640;
+                                const h = localCanvasRef.current.height || 480;
+                                ctx.save();
+                                ctx.translate(w, 0);
+                                ctx.scale(-1, 1);
+                                ctx.drawImage(rawVideoRef.current, 0, 0, w, h);
+                                ctx.restore();
+                            }
+
+                            try {
+                                await selfieSegmentation.send({image: rawVideoRef.current});
+                            } catch(err) {
+                                // Abaikan error jika video belum sepenuhnya di-render
+                            }
+                            
                             requestAnimationFrame(sendFrame);
                         };
 
-                        rawVideoRef.current.onloadeddata = () => {
-                            rawVideoRef.current.play();
+                        rawVideoRef.current.onloadedmetadata = () => {
+                            rawVideoRef.current.play(); // Play saat metadata siap
+                        };
+
+                        rawVideoRef.current.onplay = () => {
                             setIsCameraReady(true);
                             sendFrame();
                             
-                            // Jika saya Guest, telpon Host dan kirim video tanpa background saya
-                            if (!isHost && peer) {
+                            // Telpon teman jika saya Guest
+                            if (!isHost && peer && localCanvasRef.current) {
                                 const myStream = localCanvasRef.current.captureStream(30);
                                 const call = peer.call(`angiebooth-${roomCode}`, myStream);
-                                
                                 call.on('stream', (hostVideoStream) => {
                                     setRemoteStream(hostVideoStream);
                                 });
@@ -238,11 +252,10 @@
                         };
                     }
                 } catch (err) {
-                    alert("Akses kamera dibutuhkan.");
+                    alert("Akses kamera ditolak atau tidak didukung di perangkat ini.");
                 }
             };
 
-            // Pasang stream teman ke elemen video
             useEffect(() => {
                 if (remoteStream && remoteVideoRef.current) {
                     remoteVideoRef.current.srcObject = remoteStream;
@@ -256,7 +269,7 @@
             };
 
             const selectLayout = (id) => {
-                if (!isHost) return; // Hanya host yg bisa milih
+                if (!isHost) return;
                 setSelectedLayout(id);
                 syncData({ type: 'SYNC_LAYOUT', layout: id });
             };
@@ -283,7 +296,6 @@
             };
 
             const startPhotoSequence = async () => {
-                // Gunakan state layout yang terbaru di dlm fungsi asinkron
                 setSelectedLayout(currentLayout => {
                     executePhotoCapture(currentLayout);
                     return currentLayout;
@@ -301,21 +313,13 @@
                     }
                     setCountdown('CHEESE!');
                     
-                    // GABUNGKAN KAMERA SENDIRI & KAMERA TEMAN
                     const finalCanvas = document.createElement('canvas');
                     finalCanvas.width = 640;
                     finalCanvas.height = 480;
                     const ctx = finalCanvas.getContext('2d');
                     
-                    // Gambar diri sendiri
-                    if (localCanvasRef.current) {
-                        ctx.drawImage(localCanvasRef.current, 0, 0, 640, 480);
-                    }
-                    
-                    // Gambar teman (karena backgroundnya transparan, mereka akan menumpuk!)
-                    if (remoteVideoRef.current && remoteStream) {
-                        ctx.drawImage(remoteVideoRef.current, 0, 0, 640, 480);
-                    }
+                    if (localCanvasRef.current) ctx.drawImage(localCanvasRef.current, 0, 0, 640, 480);
+                    if (remoteVideoRef.current && remoteStream) ctx.drawImage(remoteVideoRef.current, 0, 0, 640, 480);
                     
                     const imgData = finalCanvas.toDataURL('image/png');
                     currentShots.push(imgData);
@@ -381,13 +385,13 @@
                         <h2 className="font-serif text-3xl mb-4">Akses Kamera</h2>
                         <p className="opacity-70 mb-8 max-w-xs mx-auto">Klik tombol di bawah untuk menyalakan AI penghapus background.</p>
                         
-                        {/* Tersembunyi: Canvas Lokal & Video Teman */}
-                        <video ref={rawVideoRef} className="hidden" playsInline muted></video>
+                        {/* Wajib menggunakan autoPlay dan playsInline agar jalan di HP */}
+                        <video ref={rawVideoRef} className="hidden" playsInline autoPlay muted width="640" height="480"></video>
                         <canvas ref={localCanvasRef} width="640" height="480" className="hidden"></canvas>
                         
                         <button onClick={() => {
                             startCameraAndAI();
-                            if(isHost) setTimeout(gotoSetupSize, 2500); // Host otomatis lanjut setelah kamera nyala
+                            if(isHost) setTimeout(gotoSetupSize, 2500);
                         }} className="ticket-btn w-64 py-4 rounded font-bold">
                             Nyalakan Kamera
                         </button>
@@ -453,14 +457,23 @@
             if (view === 'booth') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center bg-black relative">
-                        {/* Video Teman (Remote) akan tampil di atas */}
-                        <video ref={remoteVideoRef} className="absolute inset-0 w-full h-full object-cover opacity-80" autoPlay playsInline></video>
+                        {/* Status Loading AI */}
+                        {!isAiReady && (
+                            <div className="absolute top-4 left-0 right-0 z-40 flex justify-center">
+                                <span className="bg-booth-accent/90 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg animate-pulse">
+                                    Mendownload AI Hapus Background (5MB)...
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Kamera Teman */}
+                        <video ref={remoteVideoRef} className="absolute inset-0 w-full h-full object-cover opacity-90" autoPlay playsInline muted></video>
                         
-                        {/* Canvas Sendiri (Lokal) akan tampil di depan (ditimpa) karena background sudah transparan */}
+                        {/* Kamera Sendiri (Ditumpuk di atas) */}
                         <canvas ref={localCanvasRef} width="640" height="480" className="absolute inset-0 w-full h-full object-cover z-10"></canvas>
                         
-                        <div className="absolute top-4 left-4 z-20 bg-black/50 text-white px-3 py-1 rounded-full text-sm">
-                            {remoteStream ? "✅ Teman Terhubung" : "⏳ Menunggu video teman..."}
+                        <div className="absolute top-16 left-4 z-20 bg-black/50 text-white px-3 py-1 rounded-full text-sm">
+                            {remoteStream ? "✅ Teman Terhubung" : "⏳ Menunggu teman masuk frame..."}
                         </div>
 
                         {countdown && (
