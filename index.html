@@ -43,7 +43,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-    <!-- TAMBAHAN: PeerJS untuk mengirim video antar teman -->
+    <!-- PeerJS untuk mengirim video antar teman -->
     <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
 
     <style>
@@ -87,7 +87,6 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // Inisialisasi Firebase menggunakan konfigurasi proyek Anda
         const firebaseConfig = {
             apiKey: "AIzaSyAnsmara43x_y80t--OXGKnDAjyavgGf0o",
             authDomain: "zakibooth-6f843.firebaseapp.com",
@@ -130,18 +129,20 @@
             const [selectedFrame, setSelectedFrame] = useState('simple');
             
             const videoRef = useRef(null);
-            const canvasRef = useRef(null); // Canvas utama untuk foto
+            const canvasRef = useRef(null); 
             const resultRef = useRef(null);
             
-            // TAMBAHAN: Ref untuk menampung video teman dan canvas background transparan Anda
             const remoteVids = useRef([]);
             const offscreenCanvasRef = useRef(null);
 
             const [isCameraReady, setIsCameraReady] = useState(false);
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
+            
+            // Sync Foto Antara Host & Guest
+            const [triggerCaptureState, setTriggerCaptureState] = useState(null);
+            const lastProcessedTrigger = useRef(null);
 
-            // Setup Canvas Rahasia (Offscreen)
             useEffect(() => {
                 const offscreen = document.createElement('canvas');
                 offscreen.width = 640;
@@ -157,11 +158,21 @@
                 const handleValue = (snapshot) => {
                     const data = snapshot.val();
                     if (data) {
-                        if (data.participants) {
-                            setCurrentPeople(data.participants);
-                        }
-                        if (data.status === 'started' && !isHost) {
-                            setView('camera');
+                        if (data.participants) setCurrentPeople(data.participants);
+                        
+                        // Sync Pilihan Host ke Semua Orang
+                        if (data.layout) setSelectedLayout(data.layout);
+                        if (data.frame) setSelectedFrame(data.frame);
+                        if (data.triggerCapture) setTriggerCaptureState(data.triggerCapture);
+
+                        // Guest Otomatis Mengikuti Layar Host
+                        if (!isHost) {
+                            setView(prevView => {
+                                if (data.status === 'camera' && prevView === 'lobby') return 'camera';
+                                if (data.status === 'setup-frame' && prevView === 'setup-size') return 'setup-frame';
+                                if (data.status === 'booth' && (prevView === 'setup-size' || prevView === 'setup-frame')) return 'booth';
+                                return prevView;
+                            });
                         }
                     }
                 };
@@ -170,6 +181,14 @@
                 return () => roomRef.off('value', handleValue);
             }, [roomCode, isHost]);
 
+            // Eksekusi Foto pada Guest Saat Host Menekan Tombol
+            useEffect(() => {
+                if (triggerCaptureState && triggerCaptureState !== lastProcessedTrigger.current) {
+                    lastProcessedTrigger.current = triggerCaptureState;
+                    if (!isHost) takePhotoSequence();
+                }
+            }, [triggerCaptureState]);
+
             const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
 
             const handleCreateClick = () => {
@@ -177,11 +196,12 @@
                 setIsHost(true);
                 setRoomCode(code);
                 
-                // Buat room di Firebase
                 db.ref('rooms/' + code).set({
                     status: 'waiting',
                     participants: 1,
-                    maxPeople: 2
+                    maxPeople: 2,
+                    layout: '4cut',
+                    frame: 'simple'
                 });
 
                 setView('set-people');
@@ -196,7 +216,6 @@
                             setIsHost(false);
                             setRoomCode(code);
                             
-                            // Tambah jumlah partisipan di Firebase
                             const current = snapshot.val().participants || 1;
                             roomRef.update({ participants: current + 1 });
 
@@ -217,7 +236,7 @@
             };
 
             const handleStartRoom = () => {
-                db.ref('rooms/' + roomCode).update({ status: 'started' });
+                db.ref('rooms/' + roomCode).update({ status: 'camera' });
                 setView('camera');
             };
 
@@ -225,7 +244,21 @@
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                     stream.getTracks().forEach(track => track.stop());
-                    setView('setup-size');
+                    
+                    if (isHost) {
+                        db.ref('rooms/' + roomCode).update({ status: 'setup-size' });
+                        setView('setup-size');
+                    } else {
+                        // Jika guest menyalakan kamera lebih lambat, cocokan dengan layar host saat ini
+                        db.ref('rooms/' + roomCode).once('value', snap => {
+                            const currentStatus = snap.val()?.status;
+                            if (currentStatus === 'setup-frame' || currentStatus === 'booth') {
+                                setView(currentStatus);
+                            } else {
+                                setView('setup-size');
+                            }
+                        });
+                    }
                 } catch (err) {
                     alert("Gagal mengaktifkan kamera. Pastikan browser mengizinkan akses kamera.");
                 }
@@ -247,7 +280,6 @@
                             const w = canvasRef.current.width;
                             const h = canvasRef.current.height;
                             
-                            // 1. Gambar Wajah Sendiri (tanpa background) ke Canvas Rahasia (untuk dikirim ke teman)
                             const offCtx = offscreenCanvasRef.current.getContext('2d');
                             offCtx.save();
                             offCtx.clearRect(0, 0, w, h);
@@ -259,18 +291,12 @@
                             offCtx.drawImage(results.image, 0, 0, w, h);
                             offCtx.restore();
 
-                            // 2. Gabungkan Wajah Teman & Wajah Sendiri di Canvas Utama
                             const mainCtx = canvasRef.current.getContext('2d');
                             mainCtx.clearRect(0, 0, w, h);
                             
-                            // Gambar video teman dulu
                             remoteVids.current.forEach(rv => {
-                                if(rv.readyState >= 2) {
-                                    mainCtx.drawImage(rv, 0, 0, w, h);
-                                }
+                                if(rv.readyState >= 2) mainCtx.drawImage(rv, 0, 0, w, h);
                             });
-                            
-                            // Gambar wajah kita numpuk di atasnya
                             mainCtx.drawImage(offscreenCanvasRef.current, 0, 0, w, h);
                         });
 
@@ -285,15 +311,13 @@
                             setIsCameraReady(true);
                             sendFrame();
                             
-                            // TAMBAHAN: Logika PeerJS untuk bertukar kamera jarak jauh
                             const localStream = offscreenCanvasRef.current.captureStream(30);
                             
                             if (isHost) {
                                 const peer = new Peer(`zakibooth-${roomCode}`);
                                 peer.on('call', (call) => {
-                                    call.answer(localStream); // Kirim wajah kita ke teman
+                                    call.answer(localStream);
                                     call.on('stream', (remoteStream) => {
-                                        // Terima wajah teman
                                         const rv = document.createElement('video');
                                         rv.autoplay = true;
                                         rv.playsInline = true;
@@ -330,7 +354,10 @@
             }, [view]);
 
             const takePhotoSequence = async () => {
-                const layout = LAYOUTS.find(l => l.id === selectedLayout);
+                let activeLayout = selectedLayout;
+                setSelectedLayout(curr => { activeLayout = curr; return curr; });
+                
+                const layout = LAYOUTS.find(l => l.id === activeLayout);
                 let currentShots = [];
                 
                 for(let i = 0; i < layout.slots; i++) {
@@ -466,20 +493,35 @@
                         <div className="flex items-center justify-center mb-8 relative">
                             <h2 className="font-serif text-3xl">Pick a size</h2>
                         </div>
-                        <p className="text-center opacity-70 mb-6">Tap one. Either of you can choose.</p>
+                        <p className="text-center opacity-70 mb-6">
+                            {isHost ? "Host: Tap one to choose." : "Menunggu Host memilih ukuran..."}
+                        </p>
                         
                         <div className="grid grid-cols-2 gap-4 flex-1">
                             {LAYOUTS.map(l => (
                                 <div key={l.id} 
-                                   onClick={() => setSelectedLayout(l.id)}
-                                   className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} shadow-md`}>
+                                   onClick={() => {
+                                       if(isHost) {
+                                           setSelectedLayout(l.id);
+                                           db.ref('rooms/' + roomCode).update({ layout: l.id });
+                                       }
+                                   }}
+                                   className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center transition shadow-md 
+                                     ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} 
+                                     ${isHost ? 'cursor-pointer' : 'opacity-80'}`}>
                                     <h3 className="font-bold text-xl">{l.name}</h3>
                                     <p className="text-sm opacity-70 text-center">{l.desc}</p>
                                 </div>
                             ))}
                         </div>
-                        <div className="mt-8 flex justify-center pb-8">
-                            <button onClick={() => setView('setup-frame')} className="ticket-btn w-48 py-3">Next</button>
+                        
+                        <div className="mt-8 flex justify-center pb-8 min-h-[60px]">
+                            {isHost && (
+                                <button onClick={() => {
+                                    db.ref('rooms/' + roomCode).update({ status: 'setup-frame' });
+                                    setView('setup-frame');
+                                }} className="ticket-btn w-48 py-3">Next</button>
+                            )}
                         </div>
                     </div>
                 );
@@ -489,51 +531,81 @@
                 return (
                     <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
                         <div className="flex items-center justify-center mb-6 relative">
-                            <button onClick={() => setView('setup-size')} className="absolute left-0 opacity-70">← Back</button>
+                            {isHost && <button onClick={() => {
+                                db.ref('rooms/' + roomCode).update({ status: 'setup-size' });
+                                setView('setup-size');
+                            }} className="absolute left-0 opacity-70">← Back</button>}
                             <h2 className="font-serif text-3xl">Pick a frame</h2>
                         </div>
-                        <p className="text-center opacity-70 mb-6">Your photos go in the white boxes.</p>
+                        <p className="text-center opacity-70 mb-6">
+                            {isHost ? "Host: Tap one to choose." : "Menunggu Host memilih template..."}
+                        </p>
                         
                         <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto hide-scrollbar">
                             {FRAMES.map(f => (
                                 <div key={f.id} 
-                                   onClick={() => setSelectedFrame(f.id)}
-                                   className={`border-4 rounded-xl h-48 cursor-pointer transition flex flex-col items-center justify-end p-2 shadow-lg ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}`}>
+                                   onClick={() => {
+                                       if(isHost) {
+                                           setSelectedFrame(f.id);
+                                           db.ref('rooms/' + roomCode).update({ frame: f.id });
+                                       }
+                                   }}
+                                   className={`border-4 rounded-xl h-48 transition flex flex-col items-center justify-end p-2 shadow-lg 
+                                     ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}
+                                     ${isHost ? 'cursor-pointer' : 'opacity-80'}`}>
                                     <span className="bg-black/60 text-white px-3 py-1 rounded text-sm mb-2">{f.name}</span>
                                 </div>
                             ))}
                         </div>
-                        <div className="mt-8 flex justify-center pb-8">
-                            <button onClick={() => setView('booth')} className="ticket-btn w-48 py-3">Take Photo!</button>
+                        
+                        <div className="mt-8 flex justify-center pb-8 min-h-[60px]">
+                            {isHost && (
+                                <button onClick={() => {
+                                    db.ref('rooms/' + roomCode).update({ status: 'booth' });
+                                    setView('booth');
+                                }} className="ticket-btn w-48 py-3">Take Photo!</button>
+                            )}
                         </div>
                     </div>
                 );
             }
 
             if (view === 'booth') {
+                // Mengambil class CSS dari frame yang dipilih Host untuk dijadikan background preview kamera
+                const frameClass = FRAMES.find(f => f.id === selectedFrame).class;
+
                 return (
-                    <div className="flex-1 flex flex-col items-center justify-center bg-black relative">
+                    <div className={`flex-1 flex flex-col items-center justify-center relative ${frameClass}`}>
                         <video ref={videoRef} className="hidden" playsInline muted></video>
                         
-                        {/* Canvas ini sekarang akan menampilkan wajah Anda + Teman Anda */}
                         <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
                         
                         {!isCameraReady && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80">
+                            <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80 text-white">
                                 <div className="w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-4"></div>
                                 <p>Menyiapkan Studio...</p>
                             </div>
                         )}
 
                         {countdown && (
-                            <div className="absolute inset-0 flex items-center justify-center text-8xl font-bold text-white drop-shadow-2xl z-20" style={{ textShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+                            <div className="absolute inset-0 flex items-center justify-center text-9xl font-bold text-white z-20" 
+                                 style={{ textShadow: '0 4px 20px rgba(0,0,0,0.8), 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000' }}>
                                 {countdown}
                             </div>
                         )}
                         
                         {isCameraReady && !countdown && photos.length === 0 && (
                             <div className="absolute bottom-12 z-20">
-                                <button onClick={takePhotoSequence} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
+                                {isHost ? (
+                                    <button onClick={() => {
+                                        db.ref('rooms/' + roomCode).update({ triggerCapture: Date.now() });
+                                        takePhotoSequence();
+                                    }} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
+                                ) : (
+                                    <div className="bg-black/60 text-white px-4 py-2 rounded-full text-sm">
+                                        Menunggu Host menjepret foto...
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -553,7 +625,7 @@
                             
                             <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
                                 {photos.map((p, i) => (
-                                    <div key={i} className="aspect-[4/3] bg-booth-dark overflow-hidden relative shadow-inner">
+                                    <div key={i} className="aspect-[4/3] bg-black/10 overflow-hidden relative shadow-inner rounded-sm">
                                         <img src={p} className="w-full h-full object-cover" />
                                     </div>
                                 ))}
