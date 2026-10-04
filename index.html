@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Zaki - Online Photobooth</title>
+    <title>Angie - Online Photobooth</title>
     
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Playfair+Display:wght@400;600;700&display=swap" rel="stylesheet">
@@ -15,6 +15,14 @@
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Selfie Segmentation (Hapus Background) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+
+    <!-- PeerJS untuk Multiplayer Jarak Jauh -->
+    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+
     <script>
         tailwind.config = {
             theme: {
@@ -33,47 +41,20 @@
             }
         }
     </script>
-    
-    <!-- Firebase SDK (Compat v9) -->
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-
-    <!-- MediaPipe Selfie Segmentation & html2canvas -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-
     <style>
-        body {
-            background-color: #3c342f;
-            color: #f5efdf;
-            margin: 0;
-            overflow-x: hidden;
-            font-family: 'DM Sans', sans-serif;
-        }
-        
+        body { background-color: #3c342f; color: #f5efdf; margin: 0; overflow-x: hidden; font-family: 'DM Sans', sans-serif; }
         .ticket-btn {
             background-color: #f5efdf;
-            background-image: 
-                radial-gradient(circle at 0 50%, #3c342f 8px, transparent 9px),
-                radial-gradient(circle at 100% 50%, #3c342f 8px, transparent 9px);
-            background-position: left center, right center;
-            background-repeat: no-repeat;
-            background-size: 51% 100%, 51% 100%;
-            border: 2px dashed #b5a995;
-            color: #3c342f;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-            transition: transform 0.1s;
+            background-image: radial-gradient(circle at 0 50%, #3c342f 8px, transparent 9px), radial-gradient(circle at 100% 50%, #3c342f 8px, transparent 9px);
+            background-position: left center, right center; background-repeat: no-repeat; background-size: 51% 100%, 51% 100%;
+            border: 2px dashed #b5a995; color: #3c342f; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; transition: transform 0.1s;
         }
         .ticket-btn:active { transform: scale(0.95); }
-
+        .ticket-btn:disabled { opacity: 0.5; pointer-events: none; }
         .pattern-teddy { background-color: #f5efdf; background-image: radial-gradient(#d4a373 15%, transparent 16%); background-size: 40px 40px; }
         .pattern-hearts { background-color: #fcf6bd; background-image: radial-gradient(#e17d6b 20%, transparent 21%); background-size: 30px 30px; }
         .pattern-cherry { background-color: #a2d2ff; }
         .pattern-gingham { background-color: #a3b18a; background-image: repeating-linear-gradient(transparent, transparent 15px, rgba(255,255,255,0.3) 15px, rgba(255,255,255,0.3) 30px), repeating-linear-gradient(90deg, transparent, transparent 15px, rgba(255,255,255,0.3) 15px, rgba(255,255,255,0.3) 30px); }
-
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
@@ -83,21 +64,6 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyAnsmara43x_y80t--OXGKnDAjyavgGf0o",
-            authDomain: "zakibooth-6f843.firebaseapp.com",
-            databaseURL: "https://zakibooth-6f843-default-rtdb.firebaseio.com",
-            projectId: "zakibooth-6f843",
-            storageBucket: "zakibooth-6f843.appspot.com",
-            messagingSenderId: "278467916314",
-            appId: "1:278467916314:web:6bb82d1c19c9122a897a3"
-        };
-
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-        }
-        const db = firebase.database();
 
         const LAYOUTS = [
             { id: '4cut', name: '4 cut', desc: 'the classic strip', slots: 4, cols: 1 },
@@ -115,131 +81,115 @@
 
         const App = () => {
             const [view, setView] = useState('home'); 
+            
+            // State Multiplayer
             const [roomCode, setRoomCode] = useState('');
             const [joinInput, setJoinInput] = useState('');
-            const [maxPeople, setMaxPeople] = useState(2);
-            const [currentPeople, setCurrentPeople] = useState(1);
             const [isHost, setIsHost] = useState(false);
+            const [peer, setPeer] = useState(null);
+            const [connection, setConnection] = useState(null);
+            const [remoteStream, setRemoteStream] = useState(null);
             
+            // State Booth
             const [selectedLayout, setSelectedLayout] = useState('4cut');
             const [selectedFrame, setSelectedFrame] = useState('simple');
             
-            const videoRef = useRef(null);
-            const canvasRef = useRef(null);
-            const resultRef = useRef(null);
+            const rawVideoRef = useRef(null); // Video asli
+            const localCanvasRef = useRef(null); // Canvas tanpa BG (milik sendiri)
+            const remoteVideoRef = useRef(null); // Video teman tanpa BG
+            
             const [isCameraReady, setIsCameraReady] = useState(false);
             const [countdown, setCountdown] = useState(null);
             const [photos, setPhotos] = useState([]);
 
-            // Sinkonisasi Realtime Penuh dengan Firebase Room
-            useEffect(() => {
-                if (!roomCode) return;
-                const roomRef = db.ref('rooms/' + roomCode);
-
-                const handleValue = (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        if (data.participants) setCurrentPeople(data.participants);
-                        if (data.view && data.view !== view) setView(data.view);
-                        if (data.layout && data.layout !== selectedLayout) setSelectedLayout(data.layout);
-                        if (data.frame && data.frame !== selectedFrame) setSelectedFrame(data.frame);
-                        if (data.triggerShoot && view === 'booth' && countdown === null) {
-                            takePhotoSequence(true); // Memicu foto bersamaan dari database
-                        }
-                    }
-                };
-
-                roomRef.on('value', handleValue);
-                return () => roomRef.off('value', handleValue);
-            }, [roomCode, view, countdown]);
-
-            const updateRoom = (data) => {
-                if (roomCode) {
-                    db.ref('rooms/' + roomCode).update(data);
-                }
-            };
-
             const generateCode = () => Math.random().toString(36).substring(2, 6).toUpperCase();
 
+            // ================= MULTIPLAYER LOGIC (PEERJS) =================
             const handleCreateClick = () => {
                 const code = generateCode();
-                setIsHost(true);
                 setRoomCode(code);
+                setIsHost(true);
+                setView('lobby');
+
+                // Inisiasi Server PeerJS untuk Host
+                const newPeer = new Peer(`angiebooth-${code}`);
                 
-                db.ref('rooms/' + code).set({
-                    view: 'set-people',
-                    status: 'waiting',
-                    participants: 1,
-                    maxPeople: 2,
-                    layout: '4cut',
-                    frame: 'simple'
+                newPeer.on('open', (id) => {
+                    console.log('Host siap dengan ID:', id);
                 });
 
-                setView('set-people');
+                newPeer.on('connection', (conn) => {
+                    setConnection(conn);
+                    
+                    conn.on('data', (data) => {
+                        handleIncomingData(data);
+                    });
+                    
+                    // Teman join, pindah ke layar kamera bareng-bareng
+                    setView('camera'); 
+                });
+
+                newPeer.on('call', (call) => {
+                    // Ketika teman mengirim videonya, kita angkat dan kirim video kita
+                    const myStream = localCanvasRef.current.captureStream(30);
+                    call.answer(myStream);
+                    
+                    call.on('stream', (userVideoStream) => {
+                        setRemoteStream(userVideoStream);
+                    });
+                });
+
+                setPeer(newPeer);
             };
 
             const handleJoinClick = () => {
-                const code = joinInput.trim().toUpperCase();
-                if(code.length === 4) {
-                    const roomRef = db.ref('rooms/' + code);
-                    roomRef.once('value', (snapshot) => {
-                        if (snapshot.exists()) {
-                            setIsHost(false);
-                            setRoomCode(code);
-                            
-                            const data = snapshot.val();
-                            const current = data.participants || 1;
-                            roomRef.update({ participants: current + 1 });
+                const code = joinInput.toUpperCase();
+                if(code.length !== 4) return alert("Masukkan 4 digit kode yang valid.");
+                
+                setRoomCode(code);
+                setIsHost(false);
+                setView('camera'); // Langsung masuk layar kamera
 
-                            setView(data.view || 'lobby');
-                            if (data.layout) setSelectedLayout(data.layout);
-                            if (data.frame) setSelectedFrame(data.frame);
-                        } else {
-                            alert("Room tidak ditemukan! Periksa kembali kode ruangan.");
-                        }
+                // Inisiasi Server PeerJS untuk Guest
+                const newPeer = new Peer();
+                
+                newPeer.on('open', (id) => {
+                    // Konek ke Host
+                    const conn = newPeer.connect(`angiebooth-${code}`);
+                    
+                    conn.on('open', () => {
+                        setConnection(conn);
                     });
-                } else {
-                    alert("Masukkan 4 digit kode yang valid.");
+
+                    conn.on('data', (data) => {
+                        handleIncomingData(data);
+                    });
+                });
+
+                setPeer(newPeer);
+            };
+
+            // Menangani Data Sinkronisasi Jarak Jauh
+            const handleIncomingData = (data) => {
+                if (data.type === 'SYNC_VIEW') setView(data.view);
+                if (data.type === 'SYNC_LAYOUT') setSelectedLayout(data.layout);
+                if (data.type === 'SYNC_FRAME') setSelectedFrame(data.frame);
+                if (data.type === 'TAKE_PHOTO') startPhotoSequence();
+            };
+
+            const syncData = (data) => {
+                if (connection && connection.open) {
+                    connection.send(data);
                 }
             };
 
-            const handleSetPeople = (num) => {
-                setMaxPeople(num);
-                updateRoom({ maxPeople: num, view: 'lobby' });
-                setView('lobby');
-            };
-
-            const handleStartRoom = () => {
-                updateRoom({ view: 'camera' });
-                setView('camera');
-            };
-
-            const handleActivateCamera = async () => {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                    stream.getTracks().forEach(track => track.stop());
-                    updateRoom({ view: 'setup-size' });
-                    setView('setup-size');
-                } catch (err) {
-                    alert("Gagal mengaktifkan kamera. Pastikan browser mengizinkan akses kamera.");
-                }
-            };
-
-            const handleSelectLayout = (layoutId) => {
-                setSelectedLayout(layoutId);
-                updateRoom({ layout: layoutId });
-            };
-
-            const handleSelectFrame = (frameId) => {
-                setSelectedFrame(frameId);
-                updateRoom({ frame: frameId });
-            };
-
+            // ================= CAMERA & AI LOGIC =================
             const startCameraAndAI = async () => {
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-                    if (videoRef.current) {
-                        videoRef.current.srcObject = stream;
+                    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+                    
+                    if (rawVideoRef.current) {
+                        rawVideoRef.current.srcObject = stream;
                         
                         const selfieSegmentation = new SelfieSegmentation({
                             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
@@ -247,90 +197,135 @@
                         selfieSegmentation.setOptions({ modelSelection: 1 });
                         
                         selfieSegmentation.onResults((results) => {
-                            if(!canvasRef.current) return;
-                            const ctx = canvasRef.current.getContext('2d');
-                            const w = canvasRef.current.width;
-                            const h = canvasRef.current.height;
+                            if(!localCanvasRef.current) return;
+                            const ctx = localCanvasRef.current.getContext('2d');
+                            const w = localCanvasRef.current.width;
+                            const h = localCanvasRef.current.height;
                             
                             ctx.save();
                             ctx.clearRect(0, 0, w, h);
                             ctx.translate(w, 0);
-                            ctx.scale(-1, 1);
+                            ctx.scale(-1, 1); // Mirror
                             
+                            // Masking Background jadi Transparan
                             ctx.globalCompositeOperation = 'source-over';
                             ctx.drawImage(results.segmentationMask, 0, 0, w, h);
-                            
                             ctx.globalCompositeOperation = 'source-in';
                             ctx.drawImage(results.image, 0, 0, w, h);
-                            
                             ctx.restore();
                         });
 
                         const sendFrame = async () => {
-                            if (!videoRef.current || videoRef.current.paused) return;
-                            await selfieSegmentation.send({image: videoRef.current});
+                            if (!rawVideoRef.current || rawVideoRef.current.paused) return;
+                            await selfieSegmentation.send({image: rawVideoRef.current});
                             requestAnimationFrame(sendFrame);
                         };
 
-                        videoRef.current.onloadeddata = () => {
-                            videoRef.current.play();
+                        rawVideoRef.current.onloadeddata = () => {
+                            rawVideoRef.current.play();
                             setIsCameraReady(true);
                             sendFrame();
+                            
+                            // Jika saya Guest, telpon Host dan kirim video tanpa background saya
+                            if (!isHost && peer) {
+                                const myStream = localCanvasRef.current.captureStream(30);
+                                const call = peer.call(`angiebooth-${roomCode}`, myStream);
+                                
+                                call.on('stream', (hostVideoStream) => {
+                                    setRemoteStream(hostVideoStream);
+                                });
+                            }
                         };
                     }
                 } catch (err) {
-                    alert("Terjadi kesalahan saat memuat kamera AI.");
+                    alert("Akses kamera dibutuhkan.");
                 }
             };
 
+            // Pasang stream teman ke elemen video
             useEffect(() => {
-                if (view === 'booth') {
-                    startCameraAndAI();
+                if (remoteStream && remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
                 }
-            }, [view]);
+            }, [remoteStream, view]);
 
-            const triggerShootSignal = () => {
-                updateRoom({ triggerShoot: Date.now() });
+            // ================= NAVIGATION LOGIC =================
+            const gotoSetupSize = () => {
+                setView('setup-size');
+                syncData({ type: 'SYNC_VIEW', view: 'setup-size' });
             };
 
-            const takePhotoSequence = async (fromRemote = false) => {
-                const layout = LAYOUTS.find(l => l.id === selectedLayout);
+            const selectLayout = (id) => {
+                if (!isHost) return; // Hanya host yg bisa milih
+                setSelectedLayout(id);
+                syncData({ type: 'SYNC_LAYOUT', layout: id });
+            };
+
+            const gotoSetupFrame = () => {
+                setView('setup-frame');
+                syncData({ type: 'SYNC_VIEW', view: 'setup-frame' });
+            };
+
+            const selectFrame = (id) => {
+                if (!isHost) return;
+                setSelectedFrame(id);
+                syncData({ type: 'SYNC_FRAME', frame: id });
+            };
+
+            const gotoBooth = () => {
+                setView('booth');
+                syncData({ type: 'SYNC_VIEW', view: 'booth' });
+            };
+
+            const triggerPhotoSequence = () => {
+                startPhotoSequence();
+                syncData({ type: 'TAKE_PHOTO' });
+            };
+
+            const startPhotoSequence = async () => {
+                // Gunakan state layout yang terbaru di dlm fungsi asinkron
+                setSelectedLayout(currentLayout => {
+                    executePhotoCapture(currentLayout);
+                    return currentLayout;
+                });
+            };
+
+            const executePhotoCapture = async (activeLayout) => {
+                const layoutObj = LAYOUTS.find(l => l.id === activeLayout);
                 let currentShots = [];
                 
-                for(let i = 0; i < layout.slots; i++) {
+                for(let i = 0; i < layoutObj.slots; i++) {
                     for(let c = 3; c > 0; c--) {
                         setCountdown(c);
                         await new Promise(r => setTimeout(r, 1000));
                     }
                     setCountdown('CHEESE!');
                     
-                    if (canvasRef.current) {
-                        const imgData = canvasRef.current.toDataURL('image/png');
-                        currentShots.push(imgData);
-                        setPhotos([...currentShots]);
+                    // GABUNGKAN KAMERA SENDIRI & KAMERA TEMAN
+                    const finalCanvas = document.createElement('canvas');
+                    finalCanvas.width = 640;
+                    finalCanvas.height = 480;
+                    const ctx = finalCanvas.getContext('2d');
+                    
+                    // Gambar diri sendiri
+                    if (localCanvasRef.current) {
+                        ctx.drawImage(localCanvasRef.current, 0, 0, 640, 480);
                     }
+                    
+                    // Gambar teman (karena backgroundnya transparan, mereka akan menumpuk!)
+                    if (remoteVideoRef.current && remoteStream) {
+                        ctx.drawImage(remoteVideoRef.current, 0, 0, 640, 480);
+                    }
+                    
+                    const imgData = finalCanvas.toDataURL('image/png');
+                    currentShots.push(imgData);
+                    setPhotos([...currentShots]);
                     
                     await new Promise(r => setTimeout(r, 1000));
                     setCountdown(null);
                 }
                 
-                if (videoRef.current && videoRef.current.srcObject) {
-                    videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-                }
-                
-                updateRoom({ view: 'result' });
                 setView('result');
-            };
-
-            const downloadImage = () => {
-                if (resultRef.current) {
-                    html2canvas(resultRef.current, { scale: 2, useCORS: true }).then(canvas => {
-                        const link = document.createElement('a');
-                        link.download = 'zaki-photobooth.png';
-                        link.href = canvas.toDataURL('image/png');
-                        link.click();
-                    });
-                }
             };
 
             // ================== RENDER VIEWS ==================
@@ -338,7 +333,7 @@
             if (view === 'home') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
-                        <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Zaki</h1>
+                        <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Angie</h1>
                         
                         <button onClick={handleCreateClick} className="ticket-btn w-64 py-4 text-center rounded">
                             Create Room
@@ -367,25 +362,6 @@
                 );
             }
 
-            if (view === 'set-people') {
-                return (
-                    <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
-                        <h2 className="font-serif text-3xl mb-4">How many people?</h2>
-                        <div className="grid grid-cols-2 gap-4 w-64">
-                            {[1, 2, 3, 4].map(num => (
-                                <button 
-                                    key={num} 
-                                    onClick={() => handleSetPeople(num)}
-                                    className="border-2 border-booth-cream/30 hover:border-booth-accent bg-booth-dark text-xl py-6 rounded-xl transition"
-                                >
-                                    {num}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                );
-            }
-
             if (view === 'lobby') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
@@ -393,22 +369,8 @@
                         <div className="text-6xl font-bold tracking-widest text-booth-accent bg-booth-dark border-2 border-booth-cream/20 px-8 py-4 rounded-xl shadow-lg">
                             {roomCode}
                         </div>
-                        
-                        <div className="mt-12 bg-booth-dark p-6 rounded-xl w-64 border border-booth-cream/10">
-                            <h3 className="text-lg opacity-80 mb-2">Participants</h3>
-                            <div className="text-3xl font-serif text-booth-cream">
-                                {currentPeople} / {maxPeople}
-                            </div>
-                            <p className="text-sm opacity-50 mt-2">
-                                {isHost ? "Bagikan kode ini ke temanmu" : "Menunggu Host memulai..."}
-                            </p>
-                        </div>
-                        
-                        {isHost && (
-                            <button onClick={handleStartRoom} className="ticket-btn w-64 py-4 mt-8 text-lg">
-                                Lanjut
-                            </button>
-                        )}
+                        <p className="mt-8 opacity-70">Menunggu teman memasukkan kode ini...</p>
+                        <div className="mt-4 w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mx-auto"></div>
                     </div>
                 );
             }
@@ -416,13 +378,21 @@
             if (view === 'camera') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                        <div className="w-20 h-20 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-6"></div>
-                        <h2 className="font-serif text-2xl">Siap Menggunakan Kamera</h2>
-                        <p className="opacity-70 mt-4 max-w-xs mx-auto">Klik tombol di bawah untuk mengaktifkan kamera Anda bersama teman.</p>
+                        <h2 className="font-serif text-3xl mb-4">Akses Kamera</h2>
+                        <p className="opacity-70 mb-8 max-w-xs mx-auto">Klik tombol di bawah untuk menyalakan AI penghapus background.</p>
                         
-                        <button onClick={handleActivateCamera} className="bg-booth-accent text-white font-bold rounded-lg px-8 py-4 mt-8 shadow-lg active:scale-95 transition">
-                            Aktifkan Kamera
+                        {/* Tersembunyi: Canvas Lokal & Video Teman */}
+                        <video ref={rawVideoRef} className="hidden" playsInline muted></video>
+                        <canvas ref={localCanvasRef} width="640" height="480" className="hidden"></canvas>
+                        
+                        <button onClick={() => {
+                            startCameraAndAI();
+                            if(isHost) setTimeout(gotoSetupSize, 2500); // Host otomatis lanjut setelah kamera nyala
+                        }} className="ticket-btn w-64 py-4 rounded font-bold">
+                            Nyalakan Kamera
                         </button>
+                        
+                        {!isHost && <p className="mt-8 text-sm opacity-50">Menunggu Host memilih layout...</p>}
                     </div>
                 );
             }
@@ -430,24 +400,26 @@
             if (view === 'setup-size') {
                 return (
                     <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
-                        <div className="flex items-center justify-center mb-8 relative">
-                            <h2 className="font-serif text-3xl">Pick a size</h2>
-                        </div>
-                        <p className="text-center opacity-70 mb-6">Siapapun bisa memilih. Pilihan akan tersinkron!</p>
+                        <h2 className="font-serif text-3xl text-center mb-2">Pick a size</h2>
+                        <p className="text-center opacity-70 mb-8">{isHost ? "Host: Tap one" : "Menunggu Host memilih..."}</p>
                         
                         <div className="grid grid-cols-2 gap-4 flex-1">
                             {LAYOUTS.map(l => (
                                 <div key={l.id} 
-                                   onClick={() => handleSelectLayout(l.id)}
-                                   className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'} shadow-md`}>
+                                     onClick={() => selectLayout(l.id)}
+                                     className={`border-2 rounded-xl p-4 flex flex-col items-center justify-center transition shadow-md
+                                     ${selectedLayout === l.id ? 'border-booth-accent bg-booth-dark' : 'border-booth-cream/10 bg-booth-bg'}
+                                     ${!isHost ? 'opacity-80' : 'cursor-pointer'}`}>
                                     <h3 className="font-bold text-xl">{l.name}</h3>
                                     <p className="text-sm opacity-70 text-center">{l.desc}</p>
                                 </div>
                             ))}
                         </div>
-                        <div className="mt-8 flex justify-center pb-8">
-                            <button onClick={() => { updateRoom({ view: 'setup-frame' }); setView('setup-frame'); }} className="ticket-btn w-48 py-3">Next</button>
-                        </div>
+                        {isHost && (
+                            <div className="mt-8 flex justify-center pb-8">
+                                <button onClick={gotoSetupFrame} className="ticket-btn w-48 py-3">Next</button>
+                            </div>
+                        )}
                     </div>
                 );
             }
@@ -455,24 +427,25 @@
             if (view === 'setup-frame') {
                 return (
                     <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
-                        <div className="flex items-center justify-center mb-6 relative">
-                            <button onClick={() => { updateRoom({ view: 'setup-size' }); setView('setup-size'); }} className="absolute left-0 opacity-70">← Back</button>
-                            <h2 className="font-serif text-3xl">Pick a frame</h2>
-                        </div>
-                        <p className="text-center opacity-70 mb-6">Pilih frame favorit kalian berdua.</p>
+                        <h2 className="font-serif text-3xl text-center mb-2">Pick a frame</h2>
+                        <p className="text-center opacity-70 mb-8">{isHost ? "Host: Tap one" : "Menunggu Host memilih..."}</p>
                         
                         <div className="grid grid-cols-2 gap-4 flex-1 overflow-y-auto hide-scrollbar">
                             {FRAMES.map(f => (
                                 <div key={f.id} 
-                                   onClick={() => handleSelectFrame(f.id)}
-                                   className={`border-4 rounded-xl h-48 cursor-pointer transition flex flex-col items-center justify-end p-2 shadow-lg ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}`}>
+                                     onClick={() => selectFrame(f.id)}
+                                     className={`border-4 rounded-xl h-48 transition flex flex-col items-center justify-end p-2 shadow-lg
+                                     ${selectedFrame === f.id ? 'border-booth-accent' : 'border-booth-cream/10'} ${f.class}
+                                     ${!isHost ? 'opacity-80' : 'cursor-pointer'}`}>
                                     <span className="bg-black/60 text-white px-3 py-1 rounded text-sm mb-2">{f.name}</span>
                                 </div>
                             ))}
                         </div>
-                        <div className="mt-8 flex justify-center pb-8">
-                            <button onClick={() => { updateRoom({ view: 'booth' }); setView('booth'); }} className="ticket-btn w-48 py-3">Take Photo!</button>
-                        </div>
+                        {isHost && (
+                            <div className="mt-8 flex justify-center pb-8">
+                                <button onClick={gotoBooth} className="ticket-btn w-48 py-3">Enter Booth</button>
+                            </div>
+                        )}
                     </div>
                 );
             }
@@ -480,26 +453,31 @@
             if (view === 'booth') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center bg-black relative">
-                        <video ref={videoRef} className="hidden" playsInline muted></video>
+                        {/* Video Teman (Remote) akan tampil di atas */}
+                        <video ref={remoteVideoRef} className="absolute inset-0 w-full h-full object-cover opacity-80" autoPlay playsInline></video>
                         
-                        <canvas ref={canvasRef} width="640" height="480" className="w-full h-full object-cover"></canvas>
+                        {/* Canvas Sendiri (Lokal) akan tampil di depan (ditimpa) karena background sudah transparan */}
+                        <canvas ref={localCanvasRef} width="640" height="480" className="absolute inset-0 w-full h-full object-cover z-10"></canvas>
                         
-                        {!isCameraReady && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80">
-                                <div className="w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-4"></div>
-                                <p>Menyiapkan Studio...</p>
-                            </div>
-                        )}
+                        <div className="absolute top-4 left-4 z-20 bg-black/50 text-white px-3 py-1 rounded-full text-sm">
+                            {remoteStream ? "✅ Teman Terhubung" : "⏳ Menunggu video teman..."}
+                        </div>
 
                         {countdown && (
-                            <div className="absolute inset-0 flex items-center justify-center text-8xl font-bold text-white drop-shadow-2xl z-20" style={{ textShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
+                            <div className="absolute inset-0 flex items-center justify-center text-8xl font-bold text-white drop-shadow-2xl z-30" style={{ textShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
                                 {countdown}
                             </div>
                         )}
                         
-                        {isCameraReady && !countdown && photos.length === 0 && (
-                            <div className="absolute bottom-12 z-20">
-                                <button onClick={triggerShootSignal} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90" title="Tekan untuk mulai foto bersama!"></button>
+                        {isHost && isCameraReady && !countdown && photos.length === 0 && (
+                            <div className="absolute bottom-12 z-30">
+                                <button onClick={triggerPhotoSequence} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
+                            </div>
+                        )}
+                        
+                        {!isHost && !countdown && photos.length === 0 && (
+                            <div className="absolute bottom-12 z-30 bg-black/60 px-4 py-2 rounded-full text-white">
+                                Menunggu Host menekan tombol foto...
                             </div>
                         )}
                     </div>
@@ -514,7 +492,7 @@
                     <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
                         <h2 className="font-serif text-3xl mb-6 mt-4">Your Photos</h2>
                         
-                        <div ref={resultRef} className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
+                        <div className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
                              style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }}>
                             
                             <div className={`grid gap-2`} style={{ gridTemplateColumns: `repeat(${layoutObj.cols}, minmax(0, 1fr))` }}>
@@ -526,18 +504,13 @@
                             </div>
                             
                             <div className="text-center font-serif text-sm mt-3 font-bold text-black/60 tracking-widest">
-                                ZAKI BOOTH
+                                ANGIE BOOTH
                             </div>
                         </div>
                         
-                        <div className="flex flex-col gap-3 mt-8 w-64">
-                            <button onClick={downloadImage} className="ticket-btn w-full py-3 shadow-lg">
-                                Unduh Foto
-                            </button>
-                            <button onClick={() => window.location.reload()} className="text-booth-cream border-2 border-booth-cream py-3 rounded font-bold uppercase tracking-wider active:bg-booth-cream active:text-booth-dark transition">
-                                Home
-                            </button>
-                        </div>
+                        <button onClick={() => window.location.reload()} className="mt-10 text-booth-cream border-2 border-booth-cream px-8 py-3 rounded font-bold uppercase tracking-wider">
+                            Home
+                        </button>
                     </div>
                 );
             }
