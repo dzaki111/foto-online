@@ -433,7 +433,7 @@
                     <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
                         <h1 className="font-serif text-6xl font-bold mb-4 text-booth-cream tracking-wider">Zaki</h1>
                         <button onClick={handleCreateClick} className="ticket-btn w-64 py-4 text-center rounded">
-                            Create Room
+                            Buat Room
                         </button>
                         <div className="flex items-center space-x-2 text-booth-cream opacity-50 w-64">
                             <hr className="flex-1 border-current" />
@@ -460,7 +460,7 @@
             if (view === 'set-people') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-8">
-                        <h2 className="font-serif text-3xl mb-4">How many people?</h2>
+                        <h2 className="font-serif text-3xl mb-4">Mau berapa orang????</h2>
                         <div className="grid grid-cols-2 gap-4 w-64">
                             {[1, 2, 3, 4].map(num => (
                                 <button 
@@ -479,7 +479,7 @@
             if (view === 'lobby') {
                 return (
                     <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-                        <h2 className="font-serif text-3xl mb-2">Room Code</h2>
+                        <h2 className="font-serif text-3xl mb-2">kode room</h2>
                         <div className="text-6xl font-bold tracking-widest text-booth-accent bg-booth-dark border-2 border-booth-cream/20 px-8 py-4 rounded-xl shadow-lg">
                             {roomCode}
                         </div>
@@ -518,7 +518,7 @@
                 return (
                     <div className="flex-1 flex flex-col p-6 max-w-md mx-auto w-full">
                         <div className="flex items-center justify-center mb-8 relative">
-                            <h2 className="font-serif text-3xl">Pick a size</h2>
+                            <h2 className="font-serif text-3xl">Pilih ukuran</h2>
                         </div>
                         <p className="text-center opacity-70 mb-6">
                             {isHost ? "Host: Tap one to choose." : "Menunggu Host memilih ukuran..."}
@@ -560,7 +560,7 @@
                                 db.ref('rooms/' + roomCode).update({ status: 'setup-size' });
                                 setView('setup-size');
                             }} className="absolute left-0 opacity-70">← Back</button>}
-                            <h2 className="font-serif text-3xl">Pick a frame</h2>
+                            <h2 className="font-serif text-3xl">Pilih frame</h2>
                         </div>
                         <p className="text-center opacity-70 mb-6">
                             {isHost ? "Host: Tap one to choose." : "Menunggu Host memilih template..."}
@@ -586,7 +586,7 @@
                                 <button onClick={() => {
                                     db.ref('rooms/' + roomCode).update({ status: 'setup-bg' });
                                     setView('setup-bg');
-                                }} className="ticket-btn w-48 py-3">Next</button>
+                                }} className="ticket-btn w-48 py-3">lanjut</button>
                             )}
                         </div>
                     </div>
@@ -602,7 +602,7 @@
                                 db.ref('rooms/' + roomCode).update({ status: 'setup-frame' });
                                 setView('setup-frame');
                             }} className="absolute left-0 opacity-70">← Back</button>}
-                            <h2 className="font-serif text-3xl">Pick Background</h2>
+                            <h2 className="font-serif text-3xl">Pilih Background</h2>
                         </div>
                         <p className="text-center opacity-70 mb-6">
                             {isHost ? "Host: Pilih warna latar belakang/gorden" : "Menunggu Host memilih background..."}
@@ -628,7 +628,7 @@
                                 <button onClick={() => {
                                     db.ref('rooms/' + roomCode).update({ status: 'booth' });
                                     setView('booth');
-                                }} className="ticket-btn w-48 py-3">Enter Booth</button>
+                                }} className="ticket-btn w-48 py-3">enter tombol</button>
                             )}
                         </div>
                     </div>
@@ -646,7 +646,7 @@
                         {!isCameraReady && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center z-10 bg-black/80 text-white">
                                 <div className="w-12 h-12 border-4 border-booth-accent border-t-transparent rounded-full animate-spin mb-4"></div>
-                                <p>Menyiapkan Kamera dan Koneksi...</p>
+                                <p>Menyiapkan Kamera dan Koneksi</p>
                             </div>
                         )}
 
@@ -666,7 +666,7 @@
                                     }} className="w-20 h-20 bg-white rounded-full border-4 border-booth-accent shadow-[0_0_20px_rgba(225,125,107,0.8)] transition active:scale-90"></button>
                                 ) : (
                                     <div className="bg-black/80 text-white px-6 py-3 rounded-full text-sm font-bold border border-white/20">
-                                        Menunggu Host menjepret foto...
+                                        Menunggu Host mencet foto
                                     </div>
                                 )}
                             </div>
@@ -684,7 +684,7 @@
                 
                 return (
                     <div className="flex-1 flex flex-col items-center p-6 overflow-y-auto">
-                        <h2 className="font-serif text-3xl mb-6 mt-4">Your Photos</h2>
+                        <h2 className="font-serif text-3xl mb-6 mt-4">foto lu</h2>
                         
                         <div ref={resultRef} className={`p-4 shadow-2xl rounded-md flex flex-col gap-2 ${frameClass}`} 
                              style={{ width: layoutObj.cols === 2 ? '300px' : '220px' }}>
